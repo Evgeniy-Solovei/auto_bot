@@ -1,0 +1,9 @@
+Django==5.2.1
+adrf==0.1.9
+djangorestframework==3.16.0
+aiogram==3.20.0.post0
+httpx==0.28.1
+python-dotenv==1.1.0
+psycopg[binary]>=3.2,<4.0
+uvicorn==0.34.2
+openpyxl==3.1.5
