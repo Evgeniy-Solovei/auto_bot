@@ -1,10 +1,34 @@
 import csv
 
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.models import Group, User
 from django.db.models import Sum
 from django.http import HttpResponse
 
 from core.models import Car, DefectPhoto, Expense, ExpenseCategory, TelegramUser
+
+
+class AdminUserProxy(User):
+    class Meta:
+        proxy = True
+        verbose_name = "Пользователь админки"
+        verbose_name_plural = "Пользователи админки"
+
+
+class AdminUserAdmin(UserAdmin):
+    fieldsets = (
+        (None, {"fields": ("username", "password")}),
+        ("Личные данные", {"fields": ("first_name", "last_name", "email")}),
+        ("Права доступа", {"fields": ("is_active", "is_staff", "is_superuser", "user_permissions")}),
+        ("Важные даты", {"fields": ("last_login", "date_joined")}),
+    )
+    filter_horizontal = ("user_permissions",)
+
+
+admin.site.unregister(User)
+admin.site.register(AdminUserProxy, AdminUserAdmin)
+admin.site.unregister(Group)
 
 
 @admin.register(TelegramUser)

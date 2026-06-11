@@ -19,6 +19,7 @@ services:
     volumes:
       - media_data:/app/media
       - static_data:/app/staticfiles
+      - logs_data:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +40,8 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       BOT_API_BASE_URL: http://web:8000/api
+    volumes:
+      - logs_data:/app/logs
     depends_on:
       web:
         condition: service_started
@@ -67,3 +70,4 @@ volumes:
   postgres_data:
   media_data:
   static_data:
+  logs_data:
