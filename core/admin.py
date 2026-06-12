@@ -77,12 +77,12 @@ def export_cars_csv(modeladmin, request, queryset):
 class CarAdmin(admin.ModelAdmin):
     list_display = ("title", "brand", "model", "vin_or_plate", "status", "repair_stage", "has_photo", "total_amount", "created_by", "updated_at")
     list_filter = ("status", "repair_stage", "created_at")
-    search_fields = ("title", "brand", "model", "make_model", "vin_or_plate", "vin", "description")
+    search_fields = ("title", "brand", "model", "vin_or_plate", "vin", "description")
     autocomplete_fields = ("created_by",)
     inlines = (DefectPhotoInline, ExpenseInline,)
     actions = (export_cars_csv,)
     fieldsets = (
-        ("Заказ", {"fields": ("title", "brand", "model", "make_model", "vin_or_plate", "vin", "description", "car_photo_file_id")} ),
+        ("Заказ", {"fields": ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id")} ),
         ("Статус", {"fields": ("status", "repair_stage", "completed_at", "archived_at")} ),
         ("Служебное", {"fields": ("created_by",)}),
     )

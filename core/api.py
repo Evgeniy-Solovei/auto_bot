@@ -135,7 +135,6 @@ class CarListCreateView(InternalAPIView):
             title=data["title"],
             brand=data.get("brand", ""),
             model=data.get("model", ""),
-            make_model=data.get("make_model", ""),
             vin_or_plate=data.get("vin_or_plate", ""),
             vin=data.get("vin", ""),
             status=data.get("status", Car.Status.IN_WORK),
@@ -168,7 +167,7 @@ class CarDetailView(InternalAPIView):
         except Car.DoesNotExist:
             return Response({"detail": "Car not found."}, status=status.HTTP_404_NOT_FOUND)
         data = serializer.validated_data
-        for field in ("title", "brand", "model", "make_model", "vin_or_plate", "vin", "description", "car_photo_file_id", "status", "repair_stage"):
+        for field in ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id", "status", "repair_stage"):
             if field in data:
                 setattr(car, field, data[field])
         car.apply_status_dates()
