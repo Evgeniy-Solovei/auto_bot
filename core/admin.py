@@ -1,6 +1,7 @@
 import csv
 
 from django.contrib import admin
+from django.utils.html import format_html
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import Group, User
 from django.db.models import Sum
@@ -31,8 +32,39 @@ admin.site.register(AdminUserProxy, AdminUserAdmin)
 admin.site.unregister(Group)
 
 
+
+def admin_image_preview(file_field, width=160):
+    if not file_field:
+        return "Фото не загружено"
+    return format_html(
+        '<a href="{}" target="_blank"><img src="{}" style="max-width:{}px;max-height:120px;border-radius:6px;object-fit:cover;" /></a>',
+        file_field.url,
+        file_field.url,
+        width,
+    )
+
+
+class NoEmptyChoiceAdminMixin:
+    no_empty_choice_fields = ()
+    no_empty_fk_fields = ()
+
+    def formfield_for_choice_field(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_choice_field(db_field, request, **kwargs)
+        if db_field.name in self.no_empty_choice_fields:
+            formfield.empty_label = None
+            formfield.choices = [choice for choice in formfield.choices if choice[0] != ""]
+        return formfield
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
+        if db_field.name in self.no_empty_fk_fields:
+            formfield.empty_label = None
+        return formfield
+
+
 @admin.register(TelegramUser)
-class TelegramUserAdmin(admin.ModelAdmin):
+class TelegramUserAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    no_empty_choice_fields = ("role",)
     list_display = ("telegram_id", "full_name", "username", "role", "is_active", "created_at")
     list_filter = ("role", "is_active", "created_at")
     search_fields = ("telegram_id", "username", "full_name")
@@ -49,9 +81,13 @@ class ExpenseCategoryAdmin(admin.ModelAdmin):
 class DefectPhotoInline(admin.TabularInline):
     model = DefectPhoto
     extra = 0
-    fields = ("photo_file_id", "comment", "created_by", "created_at")
-    readonly_fields = ("created_at",)
+    fields = ("image", "defect_image_preview", "photo_file_id", "comment", "created_by", "created_at")
+    readonly_fields = ("created_at", "defect_image_preview")
     autocomplete_fields = ("created_by",)
+
+    def defect_image_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    defect_image_preview.short_description = "Фото дефекта"
 
 
 class ExpenseInline(admin.TabularInline):
@@ -74,22 +110,28 @@ def export_cars_csv(modeladmin, request, queryset):
 
 
 @admin.register(Car)
-class CarAdmin(admin.ModelAdmin):
+class CarAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    def car_photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "car_photo", None))
+    car_photo_preview.short_description = "Фото авто"
+
+    no_empty_choice_fields = ("status", "repair_stage")
     list_display = ("title", "brand", "model", "vin_or_plate", "status", "repair_stage", "has_photo", "total_amount", "created_by", "updated_at")
     list_filter = ("status", "repair_stage", "created_at")
     search_fields = ("title", "brand", "model", "vin_or_plate", "vin", "description")
     autocomplete_fields = ("created_by",)
     inlines = (DefectPhotoInline, ExpenseInline,)
     actions = (export_cars_csv,)
+    readonly_fields = ("car_photo_preview",)
     fieldsets = (
-        ("Заказ", {"fields": ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id")} ),
+        ("Заказ", {"fields": ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo", "car_photo_preview", "car_photo_file_id")} ),
         ("Статус", {"fields": ("status", "repair_stage", "completed_at", "archived_at")} ),
         ("Служебное", {"fields": ("created_by",)}),
     )
 
     @admin.display(description="Фото", boolean=True)
     def has_photo(self, obj: Car):
-        return bool(obj.car_photo_file_id)
+        return bool(obj.car_photo_file_id or obj.car_photo)
 
     @admin.display(description="Итого расходов")
     def total_amount(self, obj: Car):
@@ -109,7 +151,12 @@ def export_expenses_csv(modeladmin, request, queryset):
 
 
 @admin.register(Expense)
-class ExpenseAdmin(admin.ModelAdmin):
+class ExpenseAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    def receipt_photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "receipt_photo", None))
+    receipt_photo_preview.short_description = "Фото расхода"
+
+    no_empty_fk_fields = ("car", "category", "employee")
     list_display = ("car", "amount", "currency", "description", "category", "employee", "updated_by", "spent_at")
     list_filter = ("category", "spent_at", "car__status")
     search_fields = ("car__title", "car__brand", "car__model", "car__vin_or_plate", "description", "comment")
@@ -119,7 +166,12 @@ class ExpenseAdmin(admin.ModelAdmin):
 
 
 @admin.register(DefectPhoto)
-class DefectPhotoAdmin(admin.ModelAdmin):
+class DefectPhotoAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    def defect_image_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    defect_image_preview.short_description = "Фото дефекта"
+
+    no_empty_fk_fields = ("car",)
     list_display = ("car", "created_by", "created_at", "short_comment")
     list_filter = ("created_at", "car__status")
     search_fields = ("car__title", "car__brand", "car__model", "car__vin_or_plate", "comment", "photo_file_id")

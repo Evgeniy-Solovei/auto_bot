@@ -484,6 +484,7 @@ async def _finish_expense(message: Message, state: FSMContext) -> None:
             currency=data.get("currency", "BYN"),
             comment=data.get("comment", ""),
             receipt_photo_file_id=data.get("receipt_photo_file_id", ""),
+        receipt_photo_path=data.get("receipt_photo_path", ""),
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 400:

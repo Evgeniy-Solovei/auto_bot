@@ -41,6 +41,7 @@ services:
       POSTGRES_PORT: 5432
       BOT_API_BASE_URL: http://web:8000/api
     volumes:
+      - media_data:/app/media
       - logs_data:/app/logs
     depends_on:
       web:

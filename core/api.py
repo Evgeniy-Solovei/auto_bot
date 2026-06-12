@@ -141,6 +141,7 @@ class CarListCreateView(InternalAPIView):
             repair_stage=data.get("repair_stage", Car.RepairStage.ACCEPTED),
             description=data.get("description", ""),
             car_photo_file_id=data.get("car_photo_file_id", ""),
+            car_photo=data.get("car_photo_path", ""),
             created_by=created_by,
         )
         return Response(serialize_car(car, total=0), status=status.HTTP_201_CREATED)
@@ -170,6 +171,8 @@ class CarDetailView(InternalAPIView):
         for field in ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id", "status", "repair_stage"):
             if field in data:
                 setattr(car, field, data[field])
+        if "car_photo_path" in data:
+            car.car_photo = data["car_photo_path"]
         car.apply_status_dates()
         await car.asave()
         aggregate = await Expense.objects.filter(car=car).aaggregate(total=Sum("amount"), count=Count("id"))
@@ -200,7 +203,8 @@ class DefectPhotoListCreateView(InternalAPIView):
         created_by = await _get_user_by_telegram_id(data.get("created_by_telegram_id"))
         photo = await DefectPhoto.objects.acreate(
             car=car,
-            photo_file_id=data["photo_file_id"],
+            photo_file_id=data.get("photo_file_id", ""),
+            image=data.get("image_path", ""),
             comment=data.get("comment", ""),
             created_by=created_by,
         )
@@ -242,6 +246,7 @@ class ExpenseListCreateView(InternalAPIView):
             employee=employee,
             comment=data.get("comment", ""),
             receipt_photo_file_id=data.get("receipt_photo_file_id", ""),
+            receipt_photo=data.get("receipt_photo_path", ""),
         )
         expense = await Expense.objects.select_related("car", "category", "employee").aget(pk=expense.pk)
         return Response(serialize_expense(expense), status=status.HTTP_201_CREATED)
@@ -261,6 +266,8 @@ class ExpenseDetailView(InternalAPIView):
         for field in ("amount", "currency", "description", "comment", "receipt_photo_file_id"):
             if field in data:
                 setattr(expense, field, data[field])
+        if "receipt_photo_path" in data:
+            expense.receipt_photo = data["receipt_photo_path"]
         if data.get("updated_by_telegram_id"):
             expense.updated_by = await _get_user_by_telegram_id(data.get("updated_by_telegram_id"))
         if "category_id" in data or data.get("category_name"):

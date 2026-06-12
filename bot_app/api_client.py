@@ -82,6 +82,7 @@ class ApiClient:
             json={
                 "car_id": car_id,
                 "photo_file_id": photo_file_id,
+            "image_path": image_path,
                 "created_by_telegram_id": created_by_telegram_id,
                 "comment": comment,
             },
@@ -106,6 +107,8 @@ class ApiClient:
         currency: str = "BYN",
         comment: str = "",
         receipt_photo_file_id: str = "",
+    image_path: str = "",
+    receipt_photo_path: str = "",
     ) -> dict:
         payload = {
             "car_id": car_id,
@@ -115,6 +118,7 @@ class ApiClient:
             "employee_telegram_id": employee_telegram_id,
             "comment": comment,
             "receipt_photo_file_id": receipt_photo_file_id,
+            "receipt_photo_path": receipt_photo_path,
         }
         if category_id:
             payload["category_id"] = category_id
