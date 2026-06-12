@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from decimal import Decimal
 from typing import Any
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 
 
 load_dotenv(override=True)
+logger = logging.getLogger(__name__)
 
 
 class ApiClient:
@@ -24,16 +26,36 @@ class ApiClient:
 
     async def _request(self, method: str, path: str, **kwargs) -> Any:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30.0, headers=self._headers()) as client:
-            response = await client.request(method, path, **kwargs)
-            response.raise_for_status()
+            try:
+                response = await client.request(method, path, **kwargs)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                logger.exception(
+                    "API status error: %s %s -> %s %s",
+                    method,
+                    path,
+                    exc.response.status_code,
+                    exc.response.text[:500],
+                )
+                raise
+            except httpx.HTTPError:
+                logger.exception("API connection error: %s %s", method, path)
+                raise
             if response.content:
                 return response.json()
             return None
 
     async def _download(self, path: str) -> bytes:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30.0, headers=self._headers()) as client:
-            response = await client.get(path)
-            response.raise_for_status()
+            try:
+                response = await client.get(path)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                logger.exception("API download status error: %s -> %s", path, exc.response.status_code)
+                raise
+            except httpx.HTTPError:
+                logger.exception("API download connection error: %s", path)
+                raise
             return response.content
 
     async def register_user(self, telegram_id: int, username: str, full_name: str) -> dict:
@@ -75,6 +97,7 @@ class ApiClient:
         photo_file_id: str,
         created_by_telegram_id: int,
         comment: str = "",
+        image_path: str = "",
     ) -> dict:
         return await self._request(
             "POST",
@@ -82,7 +105,7 @@ class ApiClient:
             json={
                 "car_id": car_id,
                 "photo_file_id": photo_file_id,
-            "image_path": image_path,
+                "image_path": image_path,
                 "created_by_telegram_id": created_by_telegram_id,
                 "comment": comment,
             },
@@ -107,8 +130,7 @@ class ApiClient:
         currency: str = "BYN",
         comment: str = "",
         receipt_photo_file_id: str = "",
-    image_path: str = "",
-    receipt_photo_path: str = "",
+        receipt_photo_path: str = "",
     ) -> dict:
         payload = {
             "car_id": car_id,

@@ -70,7 +70,7 @@ class Car(models.Model):
     status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.IN_WORK)
     repair_stage = models.CharField("Этап ремонта", max_length=32, choices=RepairStage.choices, default=RepairStage.ACCEPTED)
     description = models.TextField("Комментарий", blank=True)
-    car_photo_file_id = models.CharField("Telegram file_id фото авто", max_length=255, blank=True)
+    car_photo_file_id = models.CharField("Telegram file_id фото авто", max_length=1024, blank=True)
     car_photo = models.ImageField("Фото авто", upload_to="cars/", blank=True)
     created_by = models.ForeignKey(
         TelegramUser,
@@ -127,7 +127,7 @@ class Car(models.Model):
 
 class DefectPhoto(models.Model):
     car = models.ForeignKey(Car, verbose_name="Автомобиль", related_name="defect_photos", on_delete=models.CASCADE)
-    photo_file_id = models.CharField("Telegram file_id фото дефектовки", max_length=255, blank=True)
+    photo_file_id = models.CharField("Telegram file_id фото дефектовки", max_length=1024, blank=True)
     image = models.ImageField("Фото дефектовки", upload_to="defect_photos/", blank=True)
     comment = models.TextField("Комментарий", blank=True)
     created_by = models.ForeignKey(
@@ -180,7 +180,7 @@ class Expense(models.Model):
         blank=True,
     )
     comment = models.TextField("Комментарий", blank=True)
-    receipt_photo_file_id = models.CharField("Telegram file_id фото чека", max_length=255, blank=True)
+    receipt_photo_file_id = models.CharField("Telegram file_id фото чека", max_length=1024, blank=True)
     receipt_photo = models.ImageField("Фото расхода / чека", upload_to="expense_receipts/", blank=True)
     spent_at = models.DateTimeField("Дата расхода", default=timezone.now)
     created_at = models.DateTimeField("Создан", auto_now_add=True)

@@ -20,8 +20,8 @@ class CarInputSerializer(serializers.Serializer):
     status = serializers.ChoiceField(required=False, choices=Car.Status.choices)
     repair_stage = serializers.ChoiceField(required=False, choices=Car.RepairStage.choices)
     description = serializers.CharField(required=False, allow_blank=True)
-    car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     created_by_telegram_id = serializers.IntegerField(required=False)
 
 
@@ -34,8 +34,8 @@ class CarPatchSerializer(serializers.Serializer):
     status = serializers.ChoiceField(required=False, choices=Car.Status.choices)
     repair_stage = serializers.ChoiceField(required=False, choices=Car.RepairStage.choices)
     description = serializers.CharField(required=False, allow_blank=True)
-    car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
 
 
 class CarStatusSerializer(serializers.Serializer):
@@ -48,8 +48,8 @@ class CarStageSerializer(serializers.Serializer):
 
 class DefectPhotoInputSerializer(serializers.Serializer):
     car_id = serializers.IntegerField()
-    photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    image_path = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    image_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     comment = serializers.CharField(required=False, allow_blank=True)
     created_by_telegram_id = serializers.IntegerField(required=False)
 
@@ -63,8 +63,8 @@ class ExpenseInputSerializer(serializers.Serializer):
     category_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
     employee_telegram_id = serializers.IntegerField(required=False)
     comment = serializers.CharField(required=False, allow_blank=True)
-    receipt_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    receipt_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    receipt_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    receipt_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
 
 
 class ExpensePatchSerializer(serializers.Serializer):
@@ -74,8 +74,8 @@ class ExpensePatchSerializer(serializers.Serializer):
     category_id = serializers.IntegerField(required=False, allow_null=True)
     category_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
     comment = serializers.CharField(required=False, allow_blank=True)
-    receipt_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    receipt_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    receipt_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    receipt_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     updated_by_telegram_id = serializers.IntegerField(required=False)
 
 

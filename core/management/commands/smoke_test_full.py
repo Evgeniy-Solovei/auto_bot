@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
 from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, manager_menu, employee_menu
+from bot_app.handlers import QUICK_EXPENSE_RE
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, DefectPhoto, Expense, ExpenseCategory, TelegramUser
 
@@ -15,6 +16,7 @@ class SmokeFailure(Exception):
 
 
 class Command(BaseCommand):
+    LONG_FILE_ID = "AgACAgIAAxkBAA" + ("X" * 700)
     help = "Run a full smoke test for users, permissions, orders, expenses, defect photos, statuses and menus."
 
     def add_arguments(self, parser):
@@ -68,6 +70,8 @@ class Command(BaseCommand):
         self._check_car_lists(car["id"])
         self._check_expenses(car["id"], employee.telegram_id)
         self._check_summary(car["id"])
+        quick_expense = self._check_quick_expense(car["id"], employee.telegram_id)
+        self._delete_expense(quick_expense["id"])
         self._check_status_restriction(car["id"], employee.telegram_id)
         self._delete_expense(expense_usd["id"])
 
@@ -130,7 +134,7 @@ class Command(BaseCommand):
                 "model": "Q3",
                 "vin_or_plate": "SMOKE-001",
                 "description": "Дефектовка: капот, крыло правое, фара правая, бампер.",
-                "car_photo_file_id": "smoke-car-photo-file-id",
+                "car_photo_file_id": self.LONG_FILE_ID,
                 "created_by_telegram_id": manager_tg_id,
             },
             expected=201,
@@ -138,7 +142,7 @@ class Command(BaseCommand):
         self.created_car_ids.append(data["id"])
         self._assert(data["status"] == Car.Status.IN_WORK, "New car status is in work")
         self._assert(data["repair_stage"] == Car.RepairStage.ACCEPTED, "New car repair stage is accepted")
-        self._assert(data["car_photo_file_id"] == "smoke-car-photo-file-id", "Car photo saved")
+        self._assert(data["car_photo_file_id"] == self.LONG_FILE_ID, "Car photo saved")
         return data
 
     def _patch_car(self, car_id):
@@ -153,14 +157,14 @@ class Command(BaseCommand):
             "/api/defect-photos/",
             {
                 "car_id": car_id,
-                "photo_file_id": "smoke-defect-photo-file-id",
+                "photo_file_id": self.LONG_FILE_ID,
                 "comment": "Фото оригинального номера детали",
                 "created_by_telegram_id": employee_tg_id,
             },
             expected=201,
         )
         self.created_defect_photo_ids.append(data["id"])
-        self._assert(data["photo_file_id"] == "smoke-defect-photo-file-id", "Defect photo saved")
+        self._assert(data["photo_file_id"] == self.LONG_FILE_ID, "Defect photo saved")
         photos = self._api("get", "/api/defect-photos/", expected=200, query={"car_id": car_id})
         self._assert(len(photos) == 1, "Defect photo list returns one photo")
 
@@ -176,7 +180,7 @@ class Command(BaseCommand):
                 "category_id": category.id,
                 "description": description,
                 "comment": "Smoke expense",
-                "receipt_photo_file_id": "smoke-receipt-photo-file-id",
+                "receipt_photo_file_id": self.LONG_FILE_ID,
                 "employee_telegram_id": tg_id,
             },
             expected=201,
@@ -217,6 +221,29 @@ class Command(BaseCommand):
         self._assert(row is not None, "Summary contains smoke car")
         self._assert("BYN" in row["total_expenses_by_currency"], "Summary has BYN total")
         self._assert("USD" in row["total_expenses_by_currency"], "Summary has USD total")
+
+    def _check_quick_expense(self, car_id, employee_tg_id):
+        match = QUICK_EXPENSE_RE.match("замена колодок 200")
+        self._assert(match is not None, "Quick expense text is parsed")
+        self._assert(match.group("description") == "замена колодок", "Quick expense description parsed")
+        self._assert(match.group("amount") == "200", "Quick expense amount parsed")
+        data = self._api(
+            "post",
+            "/api/expenses/",
+            {
+                "car_id": car_id,
+                "amount": match.group("amount"),
+                "currency": "BYN",
+                "category_name": "Работа",
+                "description": match.group("description"),
+                "employee_telegram_id": employee_tg_id,
+            },
+            expected=201,
+        )
+        self.created_expense_ids.append(data["id"])
+        self._assert(data["description"] == "замена колодок", "Quick expense saved")
+        self._assert(Decimal(str(data["amount"])) == Decimal("200"), "Quick expense amount saved")
+        return data
 
     def _check_status_restriction(self, car_id, employee_tg_id):
         data = self._api("patch", f"/api/cars/{car_id}/", {"status": Car.Status.COMPLETED}, expected=200)

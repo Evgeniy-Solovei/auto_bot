@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from aiogram import F, Router
@@ -44,6 +47,10 @@ from bot_app.states import AddCarStates, AddDefectPhotoStates, AddExpenseStates,
 
 load_dotenv(override=True)
 router = Router()
+logger = logging.getLogger(__name__)
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "media"))
+GENERIC_ERROR_TEXT = "Не получилось выполнить действие. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
+SAVE_ERROR_TEXT = "Не получилось сохранить данные. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
 MENU_TEXTS = {
     ACTIVE_ORDERS,
@@ -65,6 +72,31 @@ STATUS_TITLES = {
     "completed": "Завершенные заказы",
     "archived": "Архивные заказы",
 }
+
+
+def _telegram_image_file_id(message: Message) -> str:
+    if message.photo:
+        return message.photo[-1].file_id
+    if message.document and (message.document.mime_type or "").startswith("image/"):
+        return message.document.file_id
+    return ""
+
+
+async def _save_telegram_file_to_media(message: Message, file_id: str, subdir: str) -> str:
+    if not file_id:
+        return ""
+    try:
+        tg_file = await message.bot.get_file(file_id)
+        source_path = tg_file.file_path or ""
+        ext = Path(source_path).suffix or ".jpg"
+        rel_path = Path(subdir) / f"{uuid4().hex}{ext}"
+        abs_path = MEDIA_ROOT / rel_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        await message.bot.download_file(source_path, destination=abs_path)
+        return str(rel_path)
+    except Exception:
+        logger.exception("Failed to download Telegram file to media: file_id=%s subdir=%s", file_id, subdir)
+        return ""
 
 
 def _access_control_enabled() -> bool:
@@ -167,8 +199,8 @@ async def _active_cars() -> list[dict]:
     return await api_client.list_cars(status="in_work")
 
 
-async def _send_api_error(message: Message) -> None:
-    await message.answer("Не удалось связаться с сервером. Проверьте Django, PostgreSQL и .env.", reply_markup=await _message_menu(message))
+async def _send_api_error(message: Message, text: str = GENERIC_ERROR_TEXT) -> None:
+    await message.answer(text, reply_markup=await _message_menu(message))
 
 
 @router.message(CommandStart())
@@ -242,9 +274,14 @@ async def add_car_description(message: Message, state: FSMContext) -> None:
     await message.answer("Отправьте фото автомобиля или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
 
 
-@router.message(AddCarStates.photo, F.photo)
+@router.message(AddCarStates.photo, F.photo | F.document)
 async def add_car_photo(message: Message, state: FSMContext) -> None:
-    await state.update_data(car_photo_file_id=message.photo[-1].file_id)
+    file_id = _telegram_image_file_id(message)
+    if not file_id:
+        await message.answer("Отправьте фото автомобиля или нажмите Пропустить.")
+        return
+    image_path = await _save_telegram_file_to_media(message, file_id, "cars")
+    await state.update_data(car_photo_file_id=file_id, car_photo_path=image_path)
     await _finish_car(message, state)
 
 
@@ -253,7 +290,7 @@ async def add_car_photo_skip(message: Message, state: FSMContext) -> None:
     if message.text != SKIP:
         await message.answer("Отправьте фото автомобиля или нажмите Пропустить.")
         return
-    await state.update_data(car_photo_file_id="")
+    await state.update_data(car_photo_file_id="", car_photo_path="")
     await _finish_car(message, state)
 
 
@@ -310,7 +347,7 @@ async def list_cars_by_status(callback: CallbackQuery) -> None:
     try:
         cars = await api_client.list_cars(status=status_filter)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить список заказов.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     title = STATUS_TITLES.get(status_value, "Заказы")
@@ -334,7 +371,7 @@ async def change_car_status(callback: CallbackQuery) -> None:
     try:
         car = await api_client.update_car_status(int(car_id), status_value)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось изменить статус заказа.")
+        await callback.message.answer("Не получилось изменить статус. Попробуйте ещё раз.")
         await callback.answer()
         return
     await callback.message.answer(
@@ -361,7 +398,7 @@ async def change_car_stage(callback: CallbackQuery) -> None:
     try:
         car = await api_client.update_car_stage(int(car_id), stage_value)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось изменить этап ремонта.")
+        await callback.message.answer("Не получилось изменить этап. Попробуйте ещё раз.")
         await callback.answer()
         return
     await callback.message.answer(
@@ -416,7 +453,7 @@ async def add_expense_currency(callback: CallbackQuery, state: FSMContext) -> No
     try:
         categories = await api_client.list_categories()
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить категории.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     await state.set_state(AddExpenseStates.category)
@@ -456,9 +493,14 @@ async def add_expense_comment(message: Message, state: FSMContext) -> None:
     await message.answer("Отправьте фото чека/детали или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
 
 
-@router.message(AddExpenseStates.receipt, F.photo)
+@router.message(AddExpenseStates.receipt, F.photo | F.document)
 async def add_expense_receipt_photo(message: Message, state: FSMContext) -> None:
-    await state.update_data(receipt_photo_file_id=message.photo[-1].file_id)
+    file_id = _telegram_image_file_id(message)
+    if not file_id:
+        await message.answer("Отправьте фото или нажмите Пропустить.")
+        return
+    image_path = await _save_telegram_file_to_media(message, file_id, "expense_receipts")
+    await state.update_data(receipt_photo_file_id=file_id, receipt_photo_path=image_path)
     await _finish_expense(message, state)
 
 
@@ -467,7 +509,7 @@ async def add_expense_receipt_skip(message: Message, state: FSMContext) -> None:
     if message.text != SKIP:
         await message.answer("Отправьте фото или нажмите Пропустить.")
         return
-    await state.update_data(receipt_photo_file_id="")
+    await state.update_data(receipt_photo_file_id="", receipt_photo_path="")
     await _finish_expense(message, state)
 
 
@@ -484,7 +526,7 @@ async def _finish_expense(message: Message, state: FSMContext) -> None:
             currency=data.get("currency", "BYN"),
             comment=data.get("comment", ""),
             receipt_photo_file_id=data.get("receipt_photo_file_id", ""),
-        receipt_photo_path=data.get("receipt_photo_path", ""),
+            receipt_photo_path=data.get("receipt_photo_path", ""),
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 400:
@@ -532,7 +574,7 @@ async def show_expenses_status(callback: CallbackQuery) -> None:
     try:
         cars = await api_client.list_cars(status=status_filter)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить заказы.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     if not cars:
@@ -556,7 +598,7 @@ async def show_expenses_for_car(callback: CallbackQuery) -> None:
             return
         expenses = await api_client.list_expenses(car_id=car_id)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить данные.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     lines = [
@@ -658,7 +700,7 @@ async def expense_delete(callback: CallbackQuery) -> None:
     try:
         await api_client.delete_expense(expense_id)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось удалить расход.")
+        await callback.message.answer("Не получилось удалить расход. Попробуйте ещё раз.")
         await callback.answer()
         return
     await callback.message.answer("Расход удален.")
@@ -684,7 +726,7 @@ async def defect_photos(callback: CallbackQuery) -> None:
             return
         photos = await api_client.list_defect_photos(car_id=car_id)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить фото дефектовки.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     if not photos:
@@ -711,7 +753,7 @@ async def defect_photo_start(callback: CallbackQuery, state: FSMContext) -> None
     try:
         car = await api_client.get_car(car_id)
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить заказ.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     if not is_manager and car.get("status") != "in_work":
@@ -725,9 +767,14 @@ async def defect_photo_start(callback: CallbackQuery, state: FSMContext) -> None
     await callback.answer()
 
 
-@router.message(AddDefectPhotoStates.photo, F.photo)
+@router.message(AddDefectPhotoStates.photo, F.photo | F.document)
 async def defect_photo_received(message: Message, state: FSMContext) -> None:
-    await state.update_data(photo_file_id=message.photo[-1].file_id)
+    file_id = _telegram_image_file_id(message)
+    if not file_id:
+        await message.answer("Нужно отправить фото.", reply_markup=cancel_keyboard())
+        return
+    image_path = await _save_telegram_file_to_media(message, file_id, "defect_photos")
+    await state.update_data(photo_file_id=file_id, image_path=image_path)
     await state.set_state(AddDefectPhotoStates.comment)
     await message.answer("Добавьте комментарий к фото или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
 
@@ -747,6 +794,7 @@ async def defect_photo_comment(message: Message, state: FSMContext) -> None:
             photo_file_id=data["photo_file_id"],
             created_by_telegram_id=message.from_user.id if message.from_user else 0,
             comment=comment,
+            image_path=data.get("image_path", ""),
         )
     except httpx.HTTPError:
         await _send_api_error(message)
@@ -814,7 +862,7 @@ async def quick_expense_currency(callback: CallbackQuery, state: FSMContext) -> 
     try:
         categories = await api_client.list_categories()
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось получить категории.")
+        await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     await state.set_state(QuickExpenseStates.category)
@@ -855,11 +903,11 @@ async def _finish_quick_expense(
         if exc.response.status_code == 400:
             await callback.message.answer("Расход можно добавить только к заказу со статусом В работе.")
         else:
-            await callback.message.answer("Не удалось сохранить расход.")
+            await callback.message.answer(SAVE_ERROR_TEXT)
         await callback.answer()
         return
     except httpx.HTTPError:
-        await callback.message.answer("Не удалось сохранить расход.")
+        await callback.message.answer(SAVE_ERROR_TEXT)
         await callback.answer()
         return
     await state.clear()
