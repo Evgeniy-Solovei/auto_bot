@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "media"))
 GENERIC_ERROR_TEXT = "Не получилось выполнить действие. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 SAVE_ERROR_TEXT = "Не получилось сохранить данные. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
+PROCESSED_MEDIA_GROUPS: set[str] = set()
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
 MENU_TEXTS = {
     ACTIVE_ORDERS,
@@ -80,6 +81,16 @@ def _telegram_image_file_id(message: Message) -> str:
     if message.document and (message.document.mime_type or "").startswith("image/"):
         return message.document.file_id
     return ""
+
+
+def _is_duplicate_media_group(message: Message, scope: str) -> bool:
+    if not message.media_group_id:
+        return False
+    key = f"{scope}:{message.media_group_id}"
+    if key in PROCESSED_MEDIA_GROUPS:
+        return True
+    PROCESSED_MEDIA_GROUPS.add(key)
+    return False
 
 
 async def _save_telegram_file_to_media(message: Message, file_id: str, subdir: str) -> str:
@@ -276,6 +287,9 @@ async def add_car_description(message: Message, state: FSMContext) -> None:
 
 @router.message(AddCarStates.photo, F.photo | F.document)
 async def add_car_photo(message: Message, state: FSMContext) -> None:
+    if _is_duplicate_media_group(message, "add_car_photo"):
+        logger.info("Skip duplicate car photo from media group: %s", message.media_group_id)
+        return
     file_id = _telegram_image_file_id(message)
     if not file_id:
         await message.answer("Отправьте фото автомобиля или нажмите Пропустить.")
@@ -296,6 +310,9 @@ async def add_car_photo_skip(message: Message, state: FSMContext) -> None:
 
 async def _finish_car(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
+    if not data.get("title"):
+        logger.info("Skip car creation without title, probably duplicate media group update")
+        return
     if message.from_user:
         data["created_by_telegram_id"] = message.from_user.id
     try:
@@ -659,7 +676,7 @@ async def totals(message: Message) -> None:
             totals_all["BYN"] = totals_all.get("BYN", Decimal("0")) + Decimal(str(row.get("total_expenses") or 0))
         stage = row.get("repair_stage_display") or "-"
         lines.append(f"#{row['car_id']} {row['title']} - {row['status_display']} - {stage} - {total_text}")
-    if totals_all:
+    if totals_all and len(rows) > 1:
         lines.append("Всего: " + ", ".join(_money(amount, currency) for currency, amount in sorted(totals_all.items())))
     await message.answer("\n".join(lines), reply_markup=manager_menu())
 
