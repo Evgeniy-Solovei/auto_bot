@@ -8,7 +8,7 @@ from django.test import Client
 from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, manager_menu, employee_menu
 from bot_app.handlers import QUICK_EXPENSE_RE
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
-from core.models import Car, DefectPhoto, Expense, ExpenseCategory, TelegramUser
+from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 
 
 class SmokeFailure(Exception):
@@ -135,6 +135,11 @@ class Command(BaseCommand):
                 "vin_or_plate": "SMOKE-001",
                 "description": "Дефектовка: капот, крыло правое, фара правая, бампер.",
                 "car_photo_file_id": self.LONG_FILE_ID,
+                "photos": [
+                    {"file_id": self.LONG_FILE_ID + "1", "image_path": "cars/smoke-1.jpg"},
+                    {"file_id": self.LONG_FILE_ID + "2", "image_path": "cars/smoke-2.jpg"},
+                    {"file_id": self.LONG_FILE_ID + "3", "image_path": "cars/smoke-3.jpg"},
+                ],
                 "created_by_telegram_id": manager_tg_id,
             },
             expected=201,
@@ -142,7 +147,8 @@ class Command(BaseCommand):
         self.created_car_ids.append(data["id"])
         self._assert(data["status"] == Car.Status.IN_WORK, "New car status is in work")
         self._assert(data["repair_stage"] == Car.RepairStage.ACCEPTED, "New car repair stage is accepted")
-        self._assert(data["car_photo_file_id"] == self.LONG_FILE_ID, "Car photo saved")
+        self._assert(data["car_photo_file_id"] == self.LONG_FILE_ID + "1", "Car photo saved")
+        self._assert(CarPhoto.objects.filter(car_id=data["id"]).count() == 3, "All car photos saved")
         return data
 
     def _patch_car(self, car_id):
@@ -181,12 +187,18 @@ class Command(BaseCommand):
                 "description": description,
                 "comment": "Smoke expense",
                 "receipt_photo_file_id": self.LONG_FILE_ID,
+                "photos": [
+                    {"file_id": self.LONG_FILE_ID + "a", "image_path": "expense_receipts/smoke-a.jpg"},
+                    {"file_id": self.LONG_FILE_ID + "b", "image_path": "expense_receipts/smoke-b.jpg"},
+                    {"file_id": self.LONG_FILE_ID + "c", "image_path": "expense_receipts/smoke-c.jpg"},
+                ],
                 "employee_telegram_id": tg_id,
             },
             expected=201,
         )
         self.created_expense_ids.append(data["id"])
         self._assert(data["currency"] == currency, f"Expense currency {currency} saved")
+        self._assert(ExpensePhoto.objects.filter(expense_id=data["id"]).count() == 3, "All expense photos saved")
         return data
 
     def _patch_expense(self, expense_id, manager_tg_id):
@@ -277,6 +289,8 @@ class Command(BaseCommand):
     def _cleanup(self):
         if self.keep_data:
             return
+        CarPhoto.objects.filter(car_id__in=self.created_car_ids).delete()
+        ExpensePhoto.objects.filter(expense_id__in=self.created_expense_ids).delete()
         DefectPhoto.objects.filter(id__in=self.created_defect_photo_ids).delete()
         Expense.objects.filter(id__in=self.created_expense_ids).delete()
         Car.objects.filter(id__in=self.created_car_ids).delete()

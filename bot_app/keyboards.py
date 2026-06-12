@@ -12,6 +12,7 @@ ARCHIVE = "🗄 Архив"
 EXPORT = "📤 Выгрузка"
 HELP = "❓ Помощь"
 SKIP = "Пропустить"
+DONE = "Готово"
 CANCEL = "Отмена"
 
 REPAIR_STAGES = [
@@ -53,6 +54,10 @@ def main_menu(is_manager: bool = True) -> ReplyKeyboardMarkup:
 
 def skip_cancel_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=SKIP), KeyboardButton(text=CANCEL)]], resize_keyboard=True)
+
+
+def photo_collection_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=DONE), KeyboardButton(text=SKIP), KeyboardButton(text=CANCEL)]], resize_keyboard=True)
 
 
 def cancel_keyboard() -> ReplyKeyboardMarkup:

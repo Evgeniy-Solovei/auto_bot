@@ -125,6 +125,30 @@ class Car(models.Model):
         self.apply_status_dates()
 
 
+class CarPhoto(models.Model):
+    car = models.ForeignKey(Car, verbose_name="Автомобиль", related_name="photos", on_delete=models.CASCADE)
+    photo_file_id = models.CharField("Telegram file_id фото авто", max_length=1024, blank=True)
+    image = models.ImageField("Фото авто", upload_to="cars/", blank=True)
+    created_by = models.ForeignKey(
+        TelegramUser,
+        verbose_name="Добавил",
+        related_name="car_photos",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Фото автомобиля"
+        verbose_name_plural = "Фото автомобилей"
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["car", "created_at"])]
+
+    def __str__(self) -> str:
+        return f"Фото авто #{self.id} - {self.car}"
+
+
 class DefectPhoto(models.Model):
     car = models.ForeignKey(Car, verbose_name="Автомобиль", related_name="defect_photos", on_delete=models.CASCADE)
     photo_file_id = models.CharField("Telegram file_id фото дефектовки", max_length=1024, blank=True)
@@ -198,3 +222,19 @@ class Expense(models.Model):
 
     def __str__(self) -> str:
         return f"{self.description} - {self.amount} {self.currency}"
+
+
+class ExpensePhoto(models.Model):
+    expense = models.ForeignKey(Expense, verbose_name="Расход", related_name="photos", on_delete=models.CASCADE)
+    photo_file_id = models.CharField("Telegram file_id фото расхода", max_length=1024, blank=True)
+    image = models.ImageField("Фото расхода", upload_to="expense_receipts/", blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Фото расхода"
+        verbose_name_plural = "Фото расходов"
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["expense", "created_at"])]
+
+    def __str__(self) -> str:
+        return f"Фото расхода #{self.id} - {self.expense}"

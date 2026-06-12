@@ -7,7 +7,7 @@ from django.contrib.auth.models import Group, User
 from django.db.models import Sum
 from django.http import HttpResponse
 
-from core.models import Car, DefectPhoto, Expense, ExpenseCategory, TelegramUser
+from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 
 
 class AdminUserProxy(User):
@@ -78,6 +78,18 @@ class ExpenseCategoryAdmin(admin.ModelAdmin):
     search_fields = ("name",)
 
 
+class CarPhotoInline(admin.TabularInline):
+    model = CarPhoto
+    extra = 0
+    fields = ("image", "photo_preview", "photo_file_id", "created_by", "created_at")
+    readonly_fields = ("photo_preview", "created_at")
+    autocomplete_fields = ("created_by",)
+
+    def photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    photo_preview.short_description = "Фото"
+
+
 class DefectPhotoInline(admin.TabularInline):
     model = DefectPhoto
     extra = 0
@@ -88,6 +100,17 @@ class DefectPhotoInline(admin.TabularInline):
     def defect_image_preview(self, obj):
         return admin_image_preview(getattr(obj, "image", None))
     defect_image_preview.short_description = "Фото дефекта"
+
+
+class ExpensePhotoInline(admin.TabularInline):
+    model = ExpensePhoto
+    extra = 0
+    fields = ("image", "photo_preview", "photo_file_id", "created_at")
+    readonly_fields = ("photo_preview", "created_at")
+
+    def photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    photo_preview.short_description = "Фото"
 
 
 class ExpenseInline(admin.TabularInline):
@@ -120,7 +143,7 @@ class CarAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
     list_filter = ("status", "repair_stage", "created_at")
     search_fields = ("title", "brand", "model", "vin_or_plate", "vin", "description")
     autocomplete_fields = ("created_by",)
-    inlines = (DefectPhotoInline, ExpenseInline,)
+    inlines = (CarPhotoInline, DefectPhotoInline, ExpenseInline,)
     actions = (export_cars_csv,)
     readonly_fields = ("car_photo_preview",)
     fieldsets = (
@@ -162,6 +185,7 @@ class ExpenseAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
     search_fields = ("car__title", "car__brand", "car__model", "car__vin_or_plate", "description", "comment")
     autocomplete_fields = ("car", "category", "employee", "updated_by")
     date_hierarchy = "spent_at"
+    inlines = (ExpensePhotoInline,)
     actions = (export_expenses_csv,)
 
 
@@ -180,3 +204,29 @@ class DefectPhotoAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
     @admin.display(description="Комментарий")
     def short_comment(self, obj: DefectPhoto):
         return obj.comment[:80]
+
+
+@admin.register(CarPhoto)
+class CarPhotoAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    no_empty_fk_fields = ("car",)
+    list_display = ("car", "photo_preview", "created_by", "created_at")
+    search_fields = ("car__title", "car__brand", "car__model", "photo_file_id")
+    autocomplete_fields = ("car", "created_by")
+    readonly_fields = ("photo_preview", "created_at")
+
+    def photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    photo_preview.short_description = "Фото"
+
+
+@admin.register(ExpensePhoto)
+class ExpensePhotoAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
+    no_empty_fk_fields = ("expense",)
+    list_display = ("expense", "photo_preview", "created_at")
+    search_fields = ("expense__description", "expense__car__title", "photo_file_id")
+    autocomplete_fields = ("expense",)
+    readonly_fields = ("photo_preview", "created_at")
+
+    def photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "image", None))
+    photo_preview.short_description = "Фото"

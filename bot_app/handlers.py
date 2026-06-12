@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -21,6 +22,7 @@ from bot_app.keyboards import (
     ADD_EXPENSE,
     ARCHIVE,
     CANCEL,
+    DONE,
     EXPORT,
     HELP,
     LIST_CARS,
@@ -37,6 +39,7 @@ from bot_app.keyboards import (
     expenses_inline,
     main_menu,
     manager_menu,
+    photo_collection_keyboard,
     repair_stages_inline,
     skip_cancel_keyboard,
     status_filter_inline,
@@ -51,7 +54,7 @@ logger = logging.getLogger(__name__)
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "media"))
 GENERIC_ERROR_TEXT = "Не получилось выполнить действие. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 SAVE_ERROR_TEXT = "Не получилось сохранить данные. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
-PROCESSED_MEDIA_GROUPS: set[str] = set()
+PHOTO_STATE_LOCKS: dict[str, asyncio.Lock] = {}
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
 MENU_TEXTS = {
     ACTIVE_ORDERS,
@@ -59,6 +62,7 @@ MENU_TEXTS = {
     ADD_EXPENSE,
     ARCHIVE,
     CANCEL,
+    DONE,
     EXPORT,
     HELP,
     LIST_CARS,
@@ -83,14 +87,29 @@ def _telegram_image_file_id(message: Message) -> str:
     return ""
 
 
-def _is_duplicate_media_group(message: Message, scope: str) -> bool:
-    if not message.media_group_id:
-        return False
-    key = f"{scope}:{message.media_group_id}"
-    if key in PROCESSED_MEDIA_GROUPS:
-        return True
-    PROCESSED_MEDIA_GROUPS.add(key)
-    return False
+
+def _photo_lock(message: Message, scope: str) -> asyncio.Lock:
+    chat_id = message.chat.id if message.chat else 0
+    user_id = message.from_user.id if message.from_user else 0
+    key = f"{scope}:{chat_id}:{user_id}"
+    lock = PHOTO_STATE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        PHOTO_STATE_LOCKS[key] = lock
+    return lock
+
+
+async def _append_photo_state(message: Message, state: FSMContext, field_subdir: str) -> int:
+    file_id = _telegram_image_file_id(message)
+    if not file_id:
+        return 0
+    image_path = await _save_telegram_file_to_media(message, file_id, field_subdir)
+    async with _photo_lock(message, field_subdir):
+        data = await state.get_data()
+        photos = list(data.get("photos") or [])
+        photos.append({"file_id": file_id, "image_path": image_path})
+        await state.update_data(photos=photos)
+        return len(photos)
 
 
 async def _save_telegram_file_to_media(message: Message, file_id: str, subdir: str) -> str:
@@ -282,30 +301,28 @@ async def add_car_vin_or_plate(message: Message, state: FSMContext) -> None:
 async def add_car_description(message: Message, state: FSMContext) -> None:
     await state.update_data(description="" if message.text == SKIP else (message.text or "").strip())
     await state.set_state(AddCarStates.photo)
-    await message.answer("Отправьте фото автомобиля или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+    await message.answer("Отправьте одно или несколько фото автомобиля. Когда закончите, нажмите Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(AddCarStates.photo, F.photo | F.document)
 async def add_car_photo(message: Message, state: FSMContext) -> None:
-    if _is_duplicate_media_group(message, "add_car_photo"):
-        logger.info("Skip duplicate car photo from media group: %s", message.media_group_id)
+    count = await _append_photo_state(message, state, "cars")
+    if not count:
+        await message.answer("Отправьте фото автомобиля или нажмите Готово.")
         return
-    file_id = _telegram_image_file_id(message)
-    if not file_id:
-        await message.answer("Отправьте фото автомобиля или нажмите Пропустить.")
-        return
-    image_path = await _save_telegram_file_to_media(message, file_id, "cars")
-    await state.update_data(car_photo_file_id=file_id, car_photo_path=image_path)
-    await _finish_car(message, state)
+    await message.answer(f"Фото добавлено. Всего фото: {count}. Можно отправить ещё или нажать Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(AddCarStates.photo)
-async def add_car_photo_skip(message: Message, state: FSMContext) -> None:
-    if message.text != SKIP:
-        await message.answer("Отправьте фото автомобиля или нажмите Пропустить.")
+async def add_car_photo_done(message: Message, state: FSMContext) -> None:
+    if message.text == SKIP:
+        await state.update_data(car_photo_file_id="", car_photo_path="", photos=[])
+        await _finish_car(message, state)
         return
-    await state.update_data(car_photo_file_id="", car_photo_path="")
-    await _finish_car(message, state)
+    if message.text == DONE:
+        await _finish_car(message, state)
+        return
+    await message.answer("Отправьте фото автомобиля или нажмите Готово.", reply_markup=photo_collection_keyboard())
 
 
 async def _finish_car(message: Message, state: FSMContext) -> None:
@@ -321,7 +338,8 @@ async def _finish_car(message: Message, state: FSMContext) -> None:
         await _send_api_error(message)
         return
     await state.clear()
-    photo_line = "\nФото: добавлено" if car.get("car_photo_file_id") else "\nФото: не добавлено"
+    photo_count = len(data.get("photos") or [])
+    photo_line = f"\nФото: {photo_count} шт." if photo_count else "\nФото: не добавлено"
     await message.answer(
         "Заказ добавлен.\n"
         f"Заказ: {_car_label(car)}\n"
@@ -507,27 +525,28 @@ async def add_expense_description(message: Message, state: FSMContext) -> None:
 async def add_expense_comment(message: Message, state: FSMContext) -> None:
     await state.update_data(comment="" if message.text == SKIP else (message.text or "").strip())
     await state.set_state(AddExpenseStates.receipt)
-    await message.answer("Отправьте фото чека/детали или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+    await message.answer("Отправьте одно или несколько фото чека/детали. Когда закончите, нажмите Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(AddExpenseStates.receipt, F.photo | F.document)
 async def add_expense_receipt_photo(message: Message, state: FSMContext) -> None:
-    file_id = _telegram_image_file_id(message)
-    if not file_id:
-        await message.answer("Отправьте фото или нажмите Пропустить.")
+    count = await _append_photo_state(message, state, "expense_receipts")
+    if not count:
+        await message.answer("Отправьте фото или нажмите Готово.")
         return
-    image_path = await _save_telegram_file_to_media(message, file_id, "expense_receipts")
-    await state.update_data(receipt_photo_file_id=file_id, receipt_photo_path=image_path)
-    await _finish_expense(message, state)
+    await message.answer(f"Фото добавлено. Всего фото: {count}. Можно отправить ещё или нажать Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(AddExpenseStates.receipt)
-async def add_expense_receipt_skip(message: Message, state: FSMContext) -> None:
-    if message.text != SKIP:
-        await message.answer("Отправьте фото или нажмите Пропустить.")
+async def add_expense_receipt_done(message: Message, state: FSMContext) -> None:
+    if message.text == SKIP:
+        await state.update_data(receipt_photo_file_id="", receipt_photo_path="", photos=[])
+        await _finish_expense(message, state)
         return
-    await state.update_data(receipt_photo_file_id="", receipt_photo_path="")
-    await _finish_expense(message, state)
+    if message.text == DONE:
+        await _finish_expense(message, state)
+        return
+    await message.answer("Отправьте фото или нажмите Готово.", reply_markup=photo_collection_keyboard())
 
 
 async def _finish_expense(message: Message, state: FSMContext) -> None:
@@ -544,6 +563,7 @@ async def _finish_expense(message: Message, state: FSMContext) -> None:
             comment=data.get("comment", ""),
             receipt_photo_file_id=data.get("receipt_photo_file_id", ""),
             receipt_photo_path=data.get("receipt_photo_path", ""),
+            photos=data.get("photos") or [],
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 400:
@@ -780,49 +800,44 @@ async def defect_photo_start(callback: CallbackQuery, state: FSMContext) -> None
     await state.clear()
     await state.set_state(AddDefectPhotoStates.photo)
     await state.update_data(car_id=car_id, car_title=_car_label(car))
-    await callback.message.answer("Отправьте фото повреждения, детали или оригинального номера.", reply_markup=cancel_keyboard())
+    await callback.message.answer("Отправьте одно или несколько фото повреждений, деталей или номеров. Когда закончите, нажмите Готово.", reply_markup=photo_collection_keyboard())
     await callback.answer()
 
 
 @router.message(AddDefectPhotoStates.photo, F.photo | F.document)
 async def defect_photo_received(message: Message, state: FSMContext) -> None:
-    file_id = _telegram_image_file_id(message)
-    if not file_id:
-        await message.answer("Нужно отправить фото.", reply_markup=cancel_keyboard())
+    count = await _append_photo_state(message, state, "defect_photos")
+    if not count:
+        await message.answer("Нужно отправить фото.", reply_markup=photo_collection_keyboard())
         return
-    image_path = await _save_telegram_file_to_media(message, file_id, "defect_photos")
-    await state.update_data(photo_file_id=file_id, image_path=image_path)
-    await state.set_state(AddDefectPhotoStates.comment)
-    await message.answer("Добавьте комментарий к фото или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+    await message.answer(f"Фото добавлено. Всего фото: {count}. Можно отправить ещё или нажать Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(AddDefectPhotoStates.photo)
-async def defect_photo_invalid(message: Message) -> None:
-    await message.answer("Нужно отправить именно фото.", reply_markup=cancel_keyboard())
-
-
-@router.message(AddDefectPhotoStates.comment)
-async def defect_photo_comment(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    comment = "" if message.text == SKIP else (message.text or "").strip()
-    try:
-        photo = await api_client.create_defect_photo(
-            car_id=data["car_id"],
-            photo_file_id=data["photo_file_id"],
-            created_by_telegram_id=message.from_user.id if message.from_user else 0,
-            comment=comment,
-            image_path=data.get("image_path", ""),
-        )
-    except httpx.HTTPError:
-        await _send_api_error(message)
+async def defect_photo_done(message: Message, state: FSMContext) -> None:
+    if message.text == SKIP:
+        await state.clear()
+        await message.answer("Добавление фото дефектовки отменено.", reply_markup=await _message_menu(message))
         return
-    await state.clear()
-    await message.answer(
-        "Фото дефектовки сохранено.\n"
-        f"Заказ: {photo['car']}"
-        + (f"\nКомментарий: {photo['comment']}" if photo.get("comment") else ""),
-        reply_markup=await _message_menu(message),
-    )
+    if message.text == DONE:
+        data = await state.get_data()
+        photos = data.get("photos") or []
+        if not photos:
+            await message.answer("Сначала отправьте хотя бы одно фото или нажмите Пропустить.", reply_markup=photo_collection_keyboard())
+            return
+        try:
+            await api_client.create_defect_photo(
+                car_id=data["car_id"],
+                created_by_telegram_id=message.from_user.id if message.from_user else 0,
+                photos=photos,
+            )
+        except httpx.HTTPError:
+            await _send_api_error(message)
+            return
+        await state.clear()
+        await message.answer(f"Фото дефектовки сохранены. Всего фото: {len(photos)}.", reply_markup=await _message_menu(message))
+        return
+    await message.answer("Отправьте фото или нажмите Готово.", reply_markup=photo_collection_keyboard())
 
 
 @router.message(F.text == EXPORT)

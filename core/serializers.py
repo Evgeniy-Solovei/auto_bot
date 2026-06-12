@@ -22,6 +22,7 @@ class CarInputSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True)
     car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    photos = serializers.ListField(child=serializers.DictField(), required=False)
     created_by_telegram_id = serializers.IntegerField(required=False)
 
 
@@ -50,6 +51,7 @@ class DefectPhotoInputSerializer(serializers.Serializer):
     car_id = serializers.IntegerField()
     photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     image_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    photos = serializers.ListField(child=serializers.DictField(), required=False)
     comment = serializers.CharField(required=False, allow_blank=True)
     created_by_telegram_id = serializers.IntegerField(required=False)
 
@@ -65,6 +67,7 @@ class ExpenseInputSerializer(serializers.Serializer):
     comment = serializers.CharField(required=False, allow_blank=True)
     receipt_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     receipt_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    photos = serializers.ListField(child=serializers.DictField(), required=False)
 
 
 class ExpensePatchSerializer(serializers.Serializer):

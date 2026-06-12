@@ -94,10 +94,11 @@ class ApiClient:
     async def create_defect_photo(
         self,
         car_id: int,
-        photo_file_id: str,
-        created_by_telegram_id: int,
+        photo_file_id: str = "",
+        created_by_telegram_id: int = 0,
         comment: str = "",
         image_path: str = "",
+        photos: list[dict] | None = None,
     ) -> dict:
         return await self._request(
             "POST",
@@ -106,6 +107,7 @@ class ApiClient:
                 "car_id": car_id,
                 "photo_file_id": photo_file_id,
                 "image_path": image_path,
+                "photos": photos or [],
                 "created_by_telegram_id": created_by_telegram_id,
                 "comment": comment,
             },
@@ -131,6 +133,7 @@ class ApiClient:
         comment: str = "",
         receipt_photo_file_id: str = "",
         receipt_photo_path: str = "",
+        photos: list[dict] | None = None,
     ) -> dict:
         payload = {
             "car_id": car_id,
@@ -141,6 +144,7 @@ class ApiClient:
             "comment": comment,
             "receipt_photo_file_id": receipt_photo_file_id,
             "receipt_photo_path": receipt_photo_path,
+            "photos": photos or [],
         }
         if category_id:
             payload["category_id"] = category_id

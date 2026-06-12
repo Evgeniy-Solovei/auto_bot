@@ -1,16 +1,19 @@
 from collections import defaultdict
+
+from asgiref.sync import sync_to_async
 from io import BytesIO
 
 from adrf.views import APIView
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 from django.db.models import Count, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import exceptions, status
 from rest_framework.response import Response
 
-from core.models import Car, DefectPhoto, Expense, ExpenseCategory, TelegramUser
+from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 from core.serializers import (
     CarInputSerializer,
     CarPatchSerializer,
@@ -30,6 +33,18 @@ def _api_key_allowed(request) -> bool:
     if not settings.INTERNAL_API_KEY:
         return True
     return request.headers.get("X-API-Key") == settings.INTERNAL_API_KEY
+
+
+def _photo_items(items) -> list[dict[str, str]]:
+    photos = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        file_id = str(item.get("file_id") or item.get("photo_file_id") or "")
+        image_path = str(item.get("image_path") or item.get("path") or "")
+        if file_id or image_path:
+            photos.append({"file_id": file_id, "image_path": image_path})
+    return photos
 
 
 async def _get_category(data: dict):
@@ -61,6 +76,83 @@ def _serialize_user(user: TelegramUser) -> dict:
         "role": user.role,
         "is_active": user.is_active,
     }
+
+
+@sync_to_async
+def _create_car_with_photos_sync(data: dict, created_by, photos: list[dict[str, str]]) -> int:
+    main_photo = photos[0] if photos else {}
+    with transaction.atomic():
+        car = Car.objects.create(
+            title=data["title"],
+            brand=data.get("brand", ""),
+            model=data.get("model", ""),
+            vin_or_plate=data.get("vin_or_plate", ""),
+            vin=data.get("vin", ""),
+            status=data.get("status", Car.Status.IN_WORK),
+            repair_stage=data.get("repair_stage", Car.RepairStage.ACCEPTED),
+            description=data.get("description", ""),
+            car_photo_file_id=main_photo.get("file_id", ""),
+            car_photo=main_photo.get("image_path", ""),
+            created_by=created_by,
+        )
+        CarPhoto.objects.bulk_create(
+            [
+                CarPhoto(
+                    car=car,
+                    photo_file_id=photo.get("file_id", ""),
+                    image=photo.get("image_path", ""),
+                    created_by=created_by,
+                )
+                for photo in photos
+            ]
+        )
+        return car.id
+
+
+@sync_to_async
+def _create_defect_photos_sync(car: Car, created_by, photos: list[dict[str, str]], comment: str = "") -> list[int]:
+    with transaction.atomic():
+        created = DefectPhoto.objects.bulk_create(
+            [
+                DefectPhoto(
+                    car=car,
+                    photo_file_id=photo.get("file_id", ""),
+                    image=photo.get("image_path", ""),
+                    comment=comment,
+                    created_by=created_by,
+                )
+                for photo in photos
+            ]
+        )
+        return [photo.id for photo in created]
+
+
+@sync_to_async
+def _create_expense_with_photos_sync(data: dict, car: Car, category, employee, photos: list[dict[str, str]]) -> int:
+    main_photo = photos[0] if photos else {}
+    with transaction.atomic():
+        expense = Expense.objects.create(
+            car=car,
+            amount=data["amount"],
+            currency=data.get("currency") or "BYN",
+            description=data["description"],
+            category=category,
+            employee=employee,
+            comment=data.get("comment", ""),
+            receipt_photo_file_id=main_photo.get("file_id", ""),
+            receipt_photo=main_photo.get("image_path", ""),
+        )
+        ExpensePhoto.objects.bulk_create(
+            [
+                ExpensePhoto(
+                    expense=expense,
+                    photo_file_id=photo.get("file_id", ""),
+                    image=photo.get("image_path", ""),
+                )
+                for photo in photos
+            ]
+        )
+        return expense.id
 
 
 class InternalAPIView(APIView):
@@ -131,19 +223,11 @@ class CarListCreateView(InternalAPIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
         created_by = await _get_user_by_telegram_id(data.get("created_by_telegram_id"))
-        car = await Car.objects.acreate(
-            title=data["title"],
-            brand=data.get("brand", ""),
-            model=data.get("model", ""),
-            vin_or_plate=data.get("vin_or_plate", ""),
-            vin=data.get("vin", ""),
-            status=data.get("status", Car.Status.IN_WORK),
-            repair_stage=data.get("repair_stage", Car.RepairStage.ACCEPTED),
-            description=data.get("description", ""),
-            car_photo_file_id=data.get("car_photo_file_id", ""),
-            car_photo=data.get("car_photo_path", ""),
-            created_by=created_by,
-        )
+        photos = _photo_items(data.get("photos"))
+        if not photos and (data.get("car_photo_file_id") or data.get("car_photo_path")):
+            photos.append({"file_id": data.get("car_photo_file_id", ""), "image_path": data.get("car_photo_path", "")})
+        car_id = await _create_car_with_photos_sync(data, created_by, photos)
+        car = await Car.objects.select_related("created_by").aget(pk=car_id)
         return Response(serialize_car(car, total=0), status=status.HTTP_201_CREATED)
 
 
@@ -201,15 +285,17 @@ class DefectPhotoListCreateView(InternalAPIView):
         except Car.DoesNotExist:
             return Response({"detail": "Car not found."}, status=status.HTTP_404_NOT_FOUND)
         created_by = await _get_user_by_telegram_id(data.get("created_by_telegram_id"))
-        photo = await DefectPhoto.objects.acreate(
-            car=car,
-            photo_file_id=data.get("photo_file_id", ""),
-            image=data.get("image_path", ""),
-            comment=data.get("comment", ""),
-            created_by=created_by,
-        )
-        photo = await DefectPhoto.objects.select_related("car", "created_by").aget(pk=photo.pk)
-        return Response(serialize_defect_photo(photo), status=status.HTTP_201_CREATED)
+        photos = _photo_items(data.get("photos"))
+        if not photos and (data.get("photo_file_id") or data.get("image_path")):
+            photos.append({"file_id": data.get("photo_file_id", ""), "image_path": data.get("image_path", "")})
+        if not photos:
+            return Response({"detail": "At least one photo is required."}, status=status.HTTP_400_BAD_REQUEST)
+        photo_ids = await _create_defect_photos_sync(car, created_by, photos, data.get("comment", ""))
+        created = [photo async for photo in DefectPhoto.objects.select_related("car", "created_by").filter(id__in=photo_ids).order_by("id")]
+        payload = [serialize_defect_photo(photo) for photo in created]
+        if len(payload) == 1:
+            return Response(payload[0], status=status.HTTP_201_CREATED)
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 class ExpenseListCreateView(InternalAPIView):
@@ -237,18 +323,11 @@ class ExpenseListCreateView(InternalAPIView):
         except ObjectDoesNotExist:
             return Response({"detail": "Related object not found."}, status=status.HTTP_404_NOT_FOUND)
         employee = await _get_user_by_telegram_id(data.get("employee_telegram_id"))
-        expense = await Expense.objects.acreate(
-            car=car,
-            amount=data["amount"],
-            currency=data.get("currency") or "BYN",
-            description=data["description"],
-            category=category,
-            employee=employee,
-            comment=data.get("comment", ""),
-            receipt_photo_file_id=data.get("receipt_photo_file_id", ""),
-            receipt_photo=data.get("receipt_photo_path", ""),
-        )
-        expense = await Expense.objects.select_related("car", "category", "employee").aget(pk=expense.pk)
+        photos = _photo_items(data.get("photos"))
+        if not photos and (data.get("receipt_photo_file_id") or data.get("receipt_photo_path")):
+            photos.append({"file_id": data.get("receipt_photo_file_id", ""), "image_path": data.get("receipt_photo_path", "")})
+        expense_id = await _create_expense_with_photos_sync(data, car, category, employee, photos)
+        expense = await Expense.objects.select_related("car", "category", "employee").aget(pk=expense_id)
         return Response(serialize_expense(expense), status=status.HTTP_201_CREATED)
 
 
