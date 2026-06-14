@@ -1,4 +1,5 @@
 from collections import defaultdict
+from decimal import Decimal
 
 from asgiref.sync import sync_to_async
 from io import BytesIO
@@ -153,6 +154,28 @@ def _create_expense_with_photos_sync(data: dict, car: Car, category, employee, p
             ]
         )
         return expense.id
+
+
+@sync_to_async
+def _create_expenses_bulk_sync(items: list[dict], car: Car, category, employee, currency: str) -> list[int]:
+    with transaction.atomic():
+        locked_car = Car.objects.select_for_update().get(pk=car.pk)
+        if locked_car.status != Car.Status.IN_WORK:
+            raise ValueError("inactive_car")
+        created = Expense.objects.bulk_create(
+            [
+                Expense(
+                    car=locked_car,
+                    amount=item["amount"],
+                    currency=currency or "BYN",
+                    description=item["description"],
+                    category=category,
+                    employee=employee,
+                )
+                for item in items
+            ]
+        )
+        return [expense.id for expense in created]
 
 
 class InternalAPIView(APIView):
@@ -331,6 +354,54 @@ class ExpenseListCreateView(InternalAPIView):
         return Response(serialize_expense(expense), status=status.HTTP_201_CREATED)
 
 
+class ExpenseBulkCreateView(InternalAPIView):
+    async def post(self, request):
+        data = dict(request.data)
+        raw_items = data.get("items") or []
+        if not isinstance(raw_items, list) or not raw_items:
+            return Response({"items": "Добавьте хотя бы одну позицию расхода."}, status=status.HTTP_400_BAD_REQUEST)
+
+        items = []
+        for item in raw_items:
+            payload = {
+                "car_id": data.get("car_id"),
+                "amount": item.get("amount") if isinstance(item, dict) else None,
+                "currency": data.get("currency") or "BYN",
+                "category_id": data.get("category_id"),
+                "category_name": data.get("category_name", ""),
+                "description": item.get("description") if isinstance(item, dict) else "",
+                "employee_telegram_id": data.get("employee_telegram_id"),
+            }
+            serializer = ExpenseInputSerializer(data=payload)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            items.append(serializer.validated_data)
+
+        first = items[0]
+        try:
+            car = await Car.objects.aget(pk=first["car_id"])
+        except Car.DoesNotExist:
+            return Response({"detail": "Car not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            category = await _get_category(first)
+        except ExpenseCategory.DoesNotExist:
+            return Response({"detail": "Category not found."}, status=status.HTTP_400_BAD_REQUEST)
+        employee = await _get_user_by_telegram_id(first.get("employee_telegram_id"))
+
+        try:
+            ids = await _create_expenses_bulk_sync(items, car, category, employee, first.get("currency") or "BYN")
+        except ValueError:
+            return Response({"detail": "Cannot add expenses to completed or archived car."}, status=status.HTTP_400_BAD_REQUEST)
+
+        expenses = [
+            expense
+            async for expense in Expense.objects.select_related("car", "category", "employee", "updated_by")
+            .filter(id__in=ids)
+            .order_by("id")
+        ]
+        return Response([serialize_expense(expense) for expense in expenses], status=status.HTTP_201_CREATED)
+
+
 class ExpenseDetailView(InternalAPIView):
     async def patch(self, request, pk: int):
         serializer = ExpensePatchSerializer(data=request.data)
@@ -404,17 +475,48 @@ class ReportExportView(InternalAPIView):
             expense
             async for expense in Expense.objects.select_related("car", "category", "employee").all().order_by("car__title", "-spent_at")
         ]
-        totals = defaultdict(lambda: 0)
+
+        car_ids = [car.id for car in cars]
+        expense_ids = [expense.id for expense in expenses]
+        totals_by_currency = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
         counts = defaultdict(lambda: 0)
         for expense in expenses:
-            totals[expense.car_id] += expense.amount
+            totals_by_currency[expense.car_id][expense.currency or "BYN"] += expense.amount
             counts[expense.car_id] += 1
+
+        car_photo_file_ids = defaultdict(list)
+        car_photo_paths = defaultdict(list)
+        if car_ids:
+            async for photo in CarPhoto.objects.filter(car_id__in=car_ids).order_by("car_id", "created_at"):
+                if photo.photo_file_id:
+                    car_photo_file_ids[photo.car_id].append(photo.photo_file_id)
+                if photo.image:
+                    car_photo_paths[photo.car_id].append(str(photo.image))
+
+        expense_photo_file_ids = defaultdict(list)
+        expense_photo_paths = defaultdict(list)
+        if expense_ids:
+            async for photo in ExpensePhoto.objects.filter(expense_id__in=expense_ids).order_by("expense_id", "created_at"):
+                if photo.photo_file_id:
+                    expense_photo_file_ids[photo.expense_id].append(photo.photo_file_id)
+                if photo.image:
+                    expense_photo_paths[photo.expense_id].append(str(photo.image))
+
+        defect_photos = []
+        if car_ids:
+            defect_photos = [
+                photo
+                async for photo in DefectPhoto.objects.select_related("car", "created_by")
+                .filter(car_id__in=car_ids)
+                .order_by("car__title", "created_at")
+            ]
 
         wb = Workbook()
         ws_cars = wb.active
         ws_cars.title = "Автомобили"
         ws_expenses = wb.create_sheet("Расходы")
         ws_summary = wb.create_sheet("Итоги")
+        ws_defects = wb.create_sheet("Фото дефектовки")
 
         def write_header(ws, headers):
             ws.append(headers)
@@ -423,21 +525,119 @@ class ReportExportView(InternalAPIView):
                 cell.font = Font(bold=True)
                 cell.fill = fill
 
-        write_header(ws_cars, ["ID", "Название", "Марка", "Модель", "VIN/номер", "Статус", "Этап", "Фото file_id", "Итого расходов", "Кол-во расходов", "Создан"])
+        write_header(
+            ws_cars,
+            [
+                "ID",
+                "Название",
+                "Марка",
+                "Модель",
+                "VIN/номер",
+                "Статус",
+                "Этап",
+                "Итого BYN",
+                "Итого USD",
+                "Кол-во расходов",
+                "Фото авто file_id",
+                "Фото авто файлы",
+                "Создан",
+            ],
+        )
         for car in cars:
-            ws_cars.append([car.id, car.title, car.brand, car.model, car.vin_or_plate or car.vin, car.get_status_display(), car.get_repair_stage_display(), car.car_photo_file_id, float(totals[car.id]), counts[car.id], car.created_at.strftime("%Y-%m-%d %H:%M")])
+            file_ids = car_photo_file_ids[car.id] or ([car.car_photo_file_id] if car.car_photo_file_id else [])
+            paths = car_photo_paths[car.id] or ([str(car.car_photo)] if car.car_photo else [])
+            ws_cars.append(
+                [
+                    car.id,
+                    car.title,
+                    car.brand,
+                    car.model,
+                    car.vin_or_plate or car.vin,
+                    car.get_status_display(),
+                    car.get_repair_stage_display(),
+                    float(totals_by_currency[car.id].get("BYN", Decimal("0"))),
+                    float(totals_by_currency[car.id].get("USD", Decimal("0"))),
+                    counts[car.id],
+                    "\n".join(file_ids),
+                    "\n".join(paths),
+                    car.created_at.strftime("%Y-%m-%d %H:%M"),
+                ]
+            )
 
-        write_header(ws_expenses, ["ID", "Автомобиль", "Статус авто", "Сумма", "Описание", "Категория", "Сотрудник", "Дата", "Комментарий", "Фото file_id"])
+        write_header(
+            ws_expenses,
+            [
+                "ID",
+                "Автомобиль",
+                "Статус авто",
+                "Сумма",
+                "Валюта",
+                "Описание",
+                "Категория",
+                "Сотрудник",
+                "Дата",
+                "Комментарий",
+                "Фото file_id",
+                "Фото файлы",
+            ],
+        )
         for expense in expenses:
-            ws_expenses.append([expense.id, str(expense.car), expense.car.get_status_display(), float(expense.amount), expense.description, expense.category.name if expense.category_id else "", str(expense.employee) if expense.employee_id else "", expense.spent_at.strftime("%Y-%m-%d %H:%M"), expense.comment, expense.receipt_photo_file_id])
+            file_ids = expense_photo_file_ids[expense.id] or ([expense.receipt_photo_file_id] if expense.receipt_photo_file_id else [])
+            paths = expense_photo_paths[expense.id] or ([str(expense.receipt_photo)] if expense.receipt_photo else [])
+            ws_expenses.append(
+                [
+                    expense.id,
+                    str(expense.car),
+                    expense.car.get_status_display(),
+                    float(expense.amount),
+                    expense.currency or "BYN",
+                    expense.description,
+                    expense.category.name if expense.category_id else "",
+                    str(expense.employee) if expense.employee_id else "",
+                    expense.spent_at.strftime("%Y-%m-%d %H:%M"),
+                    expense.comment,
+                    "\n".join(file_ids),
+                    "\n".join(paths),
+                ]
+            )
 
-        write_header(ws_summary, ["Статус", "Кол-во авто", "Итого расходов"])
+        write_header(ws_summary, ["Статус", "Кол-во авто", "Кол-во расходов", "Итого BYN", "Итого USD"])
         for status_value, status_label in Car.Status.choices:
             status_cars = [car for car in cars if car.status == status_value]
-            ws_summary.append([status_label, len(status_cars), float(sum(totals[car.id] for car in status_cars))])
-        ws_summary.append(["Всего", len(cars), float(sum(totals.values()))])
+            ws_summary.append(
+                [
+                    status_label,
+                    len(status_cars),
+                    sum(counts[car.id] for car in status_cars),
+                    float(sum((totals_by_currency[car.id].get("BYN", Decimal("0")) for car in status_cars), Decimal("0"))),
+                    float(sum((totals_by_currency[car.id].get("USD", Decimal("0")) for car in status_cars), Decimal("0"))),
+                ]
+            )
+        ws_summary.append(
+            [
+                "Всего",
+                len(cars),
+                sum(counts.values()),
+                float(sum((totals.get("BYN", Decimal("0")) for totals in totals_by_currency.values()), Decimal("0"))),
+                float(sum((totals.get("USD", Decimal("0")) for totals in totals_by_currency.values()), Decimal("0"))),
+            ]
+        )
 
-        for ws in (ws_cars, ws_expenses, ws_summary):
+        write_header(ws_defects, ["ID", "Автомобиль", "Комментарий", "Добавил", "Дата", "Фото file_id", "Фото файл"])
+        for photo in defect_photos:
+            ws_defects.append(
+                [
+                    photo.id,
+                    str(photo.car),
+                    photo.comment,
+                    str(photo.created_by) if photo.created_by_id else "",
+                    photo.created_at.strftime("%Y-%m-%d %H:%M"),
+                    photo.photo_file_id,
+                    str(photo.image) if photo.image else "",
+                ]
+            )
+
+        for ws in (ws_cars, ws_expenses, ws_summary, ws_defects):
             ws.freeze_panes = "A2"
             for column in ws.columns:
                 max_length = max(len(str(cell.value or "")) for cell in column)

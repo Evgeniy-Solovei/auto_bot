@@ -152,6 +152,27 @@ class ApiClient:
             payload["category_name"] = category_name
         return await self._request("POST", "/expenses/", json=payload)
 
+    async def create_expenses_bulk(
+        self,
+        car_id: int,
+        items: list[dict],
+        employee_telegram_id: int,
+        category_id: int | None = None,
+        category_name: str = "",
+        currency: str = "BYN",
+    ) -> list[dict]:
+        payload = {
+            "car_id": car_id,
+            "items": items,
+            "employee_telegram_id": employee_telegram_id,
+            "currency": currency,
+        }
+        if category_id:
+            payload["category_id"] = category_id
+        elif category_name:
+            payload["category_name"] = category_name
+        return await self._request("POST", "/expenses/bulk/", json=payload)
+
     async def update_expense(self, expense_id: int, payload: dict) -> dict:
         return await self._request("PATCH", f"/expenses/{expense_id}/", json=payload)
 

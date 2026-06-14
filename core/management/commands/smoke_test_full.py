@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
 from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, manager_menu, employee_menu
-from bot_app.handlers import QUICK_EXPENSE_RE
+from bot_app.handlers import parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 
@@ -235,19 +235,40 @@ class Command(BaseCommand):
         self._assert("USD" in row["total_expenses_by_currency"], "Summary has USD total")
 
     def _check_quick_expense(self, car_id, employee_tg_id):
-        match = QUICK_EXPENSE_RE.match("замена колодок 200")
-        self._assert(match is not None, "Quick expense text is parsed")
-        self._assert(match.group("description") == "замена колодок", "Quick expense description parsed")
-        self._assert(match.group("amount") == "200", "Quick expense amount parsed")
+        single = parse_expense_items("замена колодок 200")
+        self._assert(len(single) == 1, "Single quick expense text is parsed")
+        self._assert(single[0]["description"] == "замена колодок", "Quick expense description parsed")
+        self._assert(single[0]["amount"] == "200", "Quick expense amount parsed")
+
+        batch = parse_expense_items("Покраска крыла 450, покраска бампера 800, покраска внутрянки 450")
+        self._assert(len(batch) == 3, "Batch quick expense text is parsed")
+        self._assert(sum(Decimal(item["amount"]) for item in batch) == Decimal("1700"), "Batch quick expense total parsed")
+
+        bulk_data = self._api(
+            "post",
+            "/api/expenses/bulk/",
+            {
+                "car_id": car_id,
+                "items": batch,
+                "currency": "BYN",
+                "category_name": "Работа",
+                "employee_telegram_id": employee_tg_id,
+            },
+            expected=201,
+        )
+        self.created_expense_ids.extend(item["id"] for item in bulk_data)
+        self._assert(len(bulk_data) == 3, "Batch quick expenses saved transactionally")
+        self._assert(sum(Decimal(str(item["amount"])) for item in bulk_data) == Decimal("1700.00"), "Batch quick expenses amount saved")
+
         data = self._api(
             "post",
             "/api/expenses/",
             {
                 "car_id": car_id,
-                "amount": match.group("amount"),
+                "amount": single[0]["amount"],
                 "currency": "BYN",
                 "category_name": "Работа",
-                "description": match.group("description"),
+                "description": single[0]["description"],
                 "employee_telegram_id": employee_tg_id,
             },
             expected=201,

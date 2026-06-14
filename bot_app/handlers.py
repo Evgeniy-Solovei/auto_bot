@@ -45,7 +45,7 @@ from bot_app.keyboards import (
     status_filter_inline,
     confirm_delete_expense_inline,
 )
-from bot_app.states import AddCarStates, AddDefectPhotoStates, AddExpenseStates, QuickExpenseStates
+from bot_app.states import AddCarStates, AddDefectPhotoStates, AddExpenseStates, EditCarStates, QuickExpenseStates
 
 
 load_dotenv(override=True)
@@ -56,6 +56,7 @@ GENERIC_ERROR_TEXT = "Не получилось выполнить действ�
 SAVE_ERROR_TEXT = "Не получилось сохранить данные. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 PHOTO_STATE_LOCKS: dict[str, asyncio.Lock] = {}
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
+QUICK_EXPENSE_TRIGGER_RE = re.compile(r"[\s\S]*\d+(?:[,.]\d{1,2})?$")
 MENU_TEXTS = {
     ACTIVE_ORDERS,
     ADD_CAR,
@@ -149,6 +150,27 @@ def _totals_text(car: dict) -> str:
     if totals:
         return ", ".join(_money(amount, currency) for currency, amount in sorted(totals.items()))
     return _money(car.get("total_expenses") or 0)
+
+
+def parse_expense_items(text: str) -> list[dict[str, str]]:
+    parts = [part.strip() for part in re.split(r"[;\n]+|,\s+(?=\D)", text.strip()) if part.strip()]
+    if not parts:
+        return []
+    items: list[dict[str, str]] = []
+    for part in parts:
+        match = QUICK_EXPENSE_RE.match(part)
+        if not match:
+            return []
+        description = match.group("description").strip(" -–—")
+        amount = Decimal(match.group("amount").replace(",", "."))
+        if not description or amount <= 0:
+            return []
+        items.append({"description": description, "amount": str(amount)})
+    return items
+
+
+def _quick_items_total(items: list[dict[str, str]]) -> Decimal:
+    return sum((Decimal(str(item["amount"])) for item in items), Decimal("0"))
 
 
 def _is_manager_access(access: dict | None) -> bool:
@@ -441,6 +463,69 @@ async def change_car_stage(callback: CallbackQuery) -> None:
         reply_markup=car_actions_inline(car, is_manager=True),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_car_title:"))
+async def edit_car_title_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_manager_callback(callback):
+        return
+    car_id = int(callback.data.split(":")[1])
+    await state.clear()
+    await state.set_state(EditCarStates.title)
+    await state.update_data(car_id=car_id)
+    await callback.message.answer("Введите новое название заказа.", reply_markup=cancel_keyboard())
+    await callback.answer()
+
+
+@router.message(EditCarStates.title)
+async def edit_car_title_save(message: Message, state: FSMContext) -> None:
+    if message.text == CANCEL:
+        await state.clear()
+        await message.answer("Редактирование отменено.", reply_markup=await _message_menu(message))
+        return
+    title = (message.text or "").strip()
+    if not title:
+        await message.answer("Название не может быть пустым.", reply_markup=cancel_keyboard())
+        return
+    data = await state.get_data()
+    try:
+        car = await api_client.update_car(int(data["car_id"]), {"title": title})
+    except httpx.HTTPError:
+        await _send_api_error(message, SAVE_ERROR_TEXT)
+        return
+    await state.clear()
+    await message.answer("Название заказа обновлено.", reply_markup=await _message_menu(message))
+    await message.answer(_car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
+
+
+@router.callback_query(F.data.startswith("edit_car_description:"))
+async def edit_car_description_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _require_manager_callback(callback):
+        return
+    car_id = int(callback.data.split(":")[1])
+    await state.clear()
+    await state.set_state(EditCarStates.description)
+    await state.update_data(car_id=car_id)
+    await callback.message.answer("Введите новое описание работ. Чтобы очистить поле, отправьте Пропустить.", reply_markup=skip_cancel_keyboard())
+    await callback.answer()
+
+
+@router.message(EditCarStates.description)
+async def edit_car_description_save(message: Message, state: FSMContext) -> None:
+    if message.text == CANCEL:
+        await state.clear()
+        await message.answer("Редактирование отменено.", reply_markup=await _message_menu(message))
+        return
+    description = "" if message.text == SKIP else (message.text or "").strip()
+    data = await state.get_data()
+    try:
+        car = await api_client.update_car(int(data["car_id"]), {"description": description})
+    except httpx.HTTPError:
+        await _send_api_error(message, SAVE_ERROR_TEXT)
+        return
+    await state.clear()
+    await message.answer("Описание работ обновлено.", reply_markup=await _message_menu(message))
+    await message.answer(_car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
 
 
 @router.message(F.text == ADD_EXPENSE)
@@ -853,17 +938,16 @@ async def export_message(message: Message) -> None:
     await message.answer_document(document, caption="Выгрузка: заказы, расходы и итоги.", reply_markup=manager_menu())
 
 
-@router.message(F.text.regexp(QUICK_EXPENSE_RE.pattern))
+@router.message(F.text.regexp(QUICK_EXPENSE_TRIGGER_RE.pattern))
 async def quick_expense(message: Message, state: FSMContext) -> None:
     if not message.text or message.text in MENU_TEXTS:
         return
-    match = QUICK_EXPENSE_RE.match(message.text.strip())
-    if not match:
-        return
-    description = match.group("description").strip()
-    amount = Decimal(match.group("amount").replace(",", "."))
-    if amount <= 0:
-        await message.answer("Сумма должна быть больше нуля.")
+    try:
+        items = parse_expense_items(message.text)
+    except (InvalidOperation, ValueError):
+        items = []
+    if not items:
+        await message.answer("Не удалось разобрать расходы. Напишите каждую позицию в формате: покраска крыла 450, покраска бампера 800")
         return
     try:
         cars = await _active_cars()
@@ -874,8 +958,13 @@ async def quick_expense(message: Message, state: FSMContext) -> None:
         await message.answer("Активных заказов нет.", reply_markup=await _message_menu(message))
         return
     await state.set_state(QuickExpenseStates.car)
-    await state.update_data(description=description, amount=str(amount))
-    await message.answer("К какому активному заказу привязать расход?", reply_markup=cars_inline(cars, "quick_car"))
+    await state.update_data(items=items)
+    total = _quick_items_total(items)
+    if len(items) == 1:
+        text = "К какому активному заказу привязать расход?"
+    else:
+        text = f"Найдено позиций: {len(items)}. Общая сумма: {total:.2f}. К какому активному заказу привязать расходы?"
+    await message.answer(text, reply_markup=cars_inline(cars, "quick_car"))
 
 
 @router.callback_query(QuickExpenseStates.car, F.data.startswith("quick_car:"))
@@ -921,16 +1010,31 @@ async def _finish_quick_expense(
     category_name: str = "",
 ) -> None:
     data = await state.get_data()
+    items = data.get("items") or []
+    currency = data.get("currency", "BYN")
     try:
-        expense = await api_client.create_expense(
-            car_id=data["car_id"],
-            amount=Decimal(data["amount"]),
-            description=data["description"],
-            employee_telegram_id=callback.from_user.id,
-            category_id=category_id,
-            category_name=category_name,
-            currency=data.get("currency", "BYN"),
-        )
+        if len(items) == 1:
+            item = items[0]
+            saved = [
+                await api_client.create_expense(
+                    car_id=data["car_id"],
+                    amount=Decimal(str(item["amount"])),
+                    description=item["description"],
+                    employee_telegram_id=callback.from_user.id,
+                    category_id=category_id,
+                    category_name=category_name,
+                    currency=currency,
+                )
+            ]
+        else:
+            saved = await api_client.create_expenses_bulk(
+                car_id=data["car_id"],
+                items=items,
+                employee_telegram_id=callback.from_user.id,
+                category_id=category_id,
+                category_name=category_name,
+                currency=currency,
+            )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 400:
             await callback.message.answer("Расход можно добавить только к заказу со статусом В работе.")
@@ -943,14 +1047,31 @@ async def _finish_quick_expense(
         await callback.answer()
         return
     await state.clear()
-    await callback.message.answer(
-        "Расход сохранен.\n"
-        f"Заказ: {expense['car']}\n"
-        f"Категория: {expense.get('category') or 'без категории'}\n"
-        f"Сумма: {_money(expense['amount'], expense.get('currency') or 'BYN')}\n"
-        f"Описание: {expense['description']}",
-        reply_markup=main_menu(_is_manager_access(await _get_access(callback.from_user.id))),
-    )
+    menu = main_menu(_is_manager_access(await _get_access(callback.from_user.id)))
+    if len(saved) == 1:
+        expense = saved[0]
+        await callback.message.answer(
+            "Расход сохранен.\n"
+            f"Заказ: {expense['car']}\n"
+            f"Категория: {expense.get('category') or 'без категории'}\n"
+            f"Сумма: {_money(expense['amount'], expense.get('currency') or 'BYN')}\n"
+            f"Описание: {expense['description']}",
+            reply_markup=menu,
+        )
+    else:
+        total = sum((Decimal(str(expense["amount"])) for expense in saved), Decimal("0"))
+        lines = [
+            "Расходы сохранены.",
+            f"Позиций: {len(saved)}",
+            f"Итого: {_money(total, currency)}",
+            f"Заказ: {saved[0]['car']}",
+            f"Категория: {saved[0].get('category') or 'без категории'}",
+        ]
+        for expense in saved[:10]:
+            lines.append(f"- {_money(expense['amount'], expense.get('currency') or currency)} — {expense['description']}")
+        if len(saved) > 10:
+            lines.append(f"Показаны первые 10 из {len(saved)}.")
+        await callback.message.answer("\n".join(lines), reply_markup=menu)
     await callback.answer()
 
 

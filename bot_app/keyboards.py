@@ -118,6 +118,12 @@ def car_actions_inline(car: dict, is_manager: bool = True) -> InlineKeyboardMark
         [InlineKeyboardButton(text="Добавить фото дефектовки", callback_data=f"defect_photo_start:{car_id}")],
     ]
     if is_manager:
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Изменить название", callback_data=f"edit_car_title:{car_id}"),
+                InlineKeyboardButton(text="Изменить работы", callback_data=f"edit_car_description:{car_id}"),
+            ]
+        )
         buttons.append([InlineKeyboardButton(text="Изменить этап", callback_data=f"stage_menu:{car_id}")])
         if car["status"] == "in_work":
             buttons.append([InlineKeyboardButton(text="Завершить", callback_data=f"car_status:{car_id}:completed")])
