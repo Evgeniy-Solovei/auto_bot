@@ -22,6 +22,8 @@ class CarInputSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True)
     car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    vin_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    vin_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     photos = serializers.ListField(child=serializers.DictField(), required=False)
     created_by_telegram_id = serializers.IntegerField(required=False)
 
@@ -37,6 +39,8 @@ class CarPatchSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True)
     car_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
     car_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    vin_photo_file_id = serializers.CharField(required=False, allow_blank=True, max_length=1024)
+    vin_photo_path = serializers.CharField(required=False, allow_blank=True, max_length=1024)
 
 
 class CarStatusSerializer(serializers.Serializer):
@@ -98,6 +102,8 @@ def serialize_car(car, total=None, expenses_count=None, total_by_currency=None) 
         "description": car.description,
         "car_photo_file_id": car.car_photo_file_id,
         "car_photo_url": car.car_photo.url if car.car_photo else "",
+        "vin_photo_file_id": car.vin_photo_file_id,
+        "vin_photo_url": car.vin_photo.url if car.vin_photo else "",
         "created_by": str(car.created_by) if car.created_by_id else None,
         "created_at": car.created_at,
         "updated_at": car.updated_at,

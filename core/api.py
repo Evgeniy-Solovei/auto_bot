@@ -94,6 +94,8 @@ def _create_car_with_photos_sync(data: dict, created_by, photos: list[dict[str, 
             description=data.get("description", ""),
             car_photo_file_id=main_photo.get("file_id", ""),
             car_photo=main_photo.get("image_path", ""),
+            vin_photo_file_id=data.get("vin_photo_file_id", ""),
+            vin_photo=data.get("vin_photo_path", ""),
             created_by=created_by,
         )
         CarPhoto.objects.bulk_create(
@@ -275,11 +277,13 @@ class CarDetailView(InternalAPIView):
         except Car.DoesNotExist:
             return Response({"detail": "Car not found."}, status=status.HTTP_404_NOT_FOUND)
         data = serializer.validated_data
-        for field in ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id", "status", "repair_stage"):
+        for field in ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo_file_id", "vin_photo_file_id", "status", "repair_stage"):
             if field in data:
                 setattr(car, field, data[field])
         if "car_photo_path" in data:
             car.car_photo = data["car_photo_path"]
+        if "vin_photo_path" in data:
+            car.vin_photo = data["vin_photo_path"]
         car.apply_status_dates()
         await car.asave()
         aggregate = await Expense.objects.filter(car=car).aaggregate(total=Sum("amount"), count=Count("id"))
@@ -457,6 +461,7 @@ class ReportSummaryView(InternalAPIView):
                     "repair_stage": car.repair_stage,
                     "repair_stage_display": car.get_repair_stage_display(),
                     "car_photo_file_id": car.car_photo_file_id,
+                    "vin_photo_file_id": car.vin_photo_file_id,
                     "total_expenses": totals[car.id],
                     "total_expenses_by_currency": totals_by_currency[car.id],
                 }
@@ -540,6 +545,8 @@ class ReportExportView(InternalAPIView):
                 "Кол-во расходов",
                 "Фото авто file_id",
                 "Фото авто файлы",
+                "Фото VIN file_id",
+                "Фото VIN файл",
                 "Создан",
             ],
         )
@@ -560,6 +567,8 @@ class ReportExportView(InternalAPIView):
                     counts[car.id],
                     "\n".join(file_ids),
                     "\n".join(paths),
+                    car.vin_photo_file_id,
+                    str(car.vin_photo) if car.vin_photo else "",
                     car.created_at.strftime("%Y-%m-%d %H:%M"),
                 ]
             )

@@ -126,9 +126,9 @@ def export_cars_csv(modeladmin, request, queryset):
     response["Content-Disposition"] = 'attachment; filename="orders.csv"'
     response.write("\ufeff")
     writer = csv.writer(response)
-    writer.writerow(["ID", "Название", "Марка", "Модель", "VIN/номер", "Статус", "Этап", "Фото file_id", "Итого расходов", "Создан"])
+    writer.writerow(["ID", "Название", "Марка", "Модель", "VIN/номер", "Статус", "Этап", "Фото авто file_id", "Фото VIN file_id", "Итого расходов", "Создан"])
     for car in queryset.annotate(total=Sum("expenses__amount")):
-        writer.writerow([car.id, car.title, car.brand, car.model, car.vin_or_plate or car.vin, car.get_status_display(), car.get_repair_stage_display(), car.car_photo_file_id, car.total or 0, car.created_at])
+        writer.writerow([car.id, car.title, car.brand, car.model, car.vin_or_plate or car.vin, car.get_status_display(), car.get_repair_stage_display(), car.car_photo_file_id, car.vin_photo_file_id, car.total or 0, car.created_at])
     return response
 
 
@@ -138,16 +138,20 @@ class CarAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
         return admin_image_preview(getattr(obj, "car_photo", None))
     car_photo_preview.short_description = "Фото авто"
 
+    def vin_photo_preview(self, obj):
+        return admin_image_preview(getattr(obj, "vin_photo", None))
+    vin_photo_preview.short_description = "Фото VIN"
+
     no_empty_choice_fields = ("status", "repair_stage")
-    list_display = ("title", "brand", "model", "vin_or_plate", "status", "repair_stage", "has_photo", "total_amount", "created_by", "updated_at")
+    list_display = ("title", "brand", "model", "vin_or_plate", "status", "repair_stage", "has_photo", "has_vin_photo", "total_amount", "created_by", "updated_at")
     list_filter = ("status", "repair_stage", "created_at")
     search_fields = ("title", "brand", "model", "vin_or_plate", "vin", "description")
     autocomplete_fields = ("created_by",)
     inlines = (CarPhotoInline, DefectPhotoInline, ExpenseInline,)
     actions = (export_cars_csv,)
-    readonly_fields = ("car_photo_preview",)
+    readonly_fields = ("car_photo_preview", "vin_photo_preview")
     fieldsets = (
-        ("Заказ", {"fields": ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo", "car_photo_preview", "car_photo_file_id")} ),
+        ("Заказ", {"fields": ("title", "brand", "model", "vin_or_plate", "vin", "description", "car_photo", "car_photo_preview", "car_photo_file_id", "vin_photo", "vin_photo_preview", "vin_photo_file_id")} ),
         ("Статус", {"fields": ("status", "repair_stage", "completed_at", "archived_at")} ),
         ("Служебное", {"fields": ("created_by",)}),
     )
@@ -155,6 +159,10 @@ class CarAdmin(NoEmptyChoiceAdminMixin, admin.ModelAdmin):
     @admin.display(description="Фото", boolean=True)
     def has_photo(self, obj: Car):
         return bool(obj.car_photo_file_id or obj.car_photo)
+
+    @admin.display(description="Фото VIN", boolean=True)
+    def has_vin_photo(self, obj: Car):
+        return bool(obj.vin_photo_file_id or obj.vin_photo)
 
     @admin.display(description="Итого расходов")
     def total_amount(self, obj: Car):

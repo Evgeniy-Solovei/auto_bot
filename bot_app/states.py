@@ -6,6 +6,7 @@ class AddCarStates(StatesGroup):
     brand = State()
     model = State()
     vin_or_plate = State()
+    vin_photo = State()
     description = State()
     photo = State()
 
@@ -36,4 +37,5 @@ class EditCarStates(StatesGroup):
     brand = State()
     model = State()
     vin_or_plate = State()
+    vin_photo = State()
     description = State()

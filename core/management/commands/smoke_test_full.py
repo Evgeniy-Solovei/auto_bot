@@ -135,6 +135,8 @@ class Command(BaseCommand):
                 "vin_or_plate": "SMOKE-001",
                 "description": "Дефектовка: капот, крыло правое, фара правая, бампер.",
                 "car_photo_file_id": self.LONG_FILE_ID,
+                "vin_photo_file_id": self.LONG_FILE_ID + "vin",
+                "vin_photo_path": "vin_photos/smoke-vin.jpg",
                 "photos": [
                     {"file_id": self.LONG_FILE_ID + "1", "image_path": "cars/smoke-1.jpg"},
                     {"file_id": self.LONG_FILE_ID + "2", "image_path": "cars/smoke-2.jpg"},
@@ -148,6 +150,7 @@ class Command(BaseCommand):
         self._assert(data["status"] == Car.Status.IN_WORK, "New car status is in work")
         self._assert(data["repair_stage"] == Car.RepairStage.ACCEPTED, "New car repair stage is accepted")
         self._assert(data["car_photo_file_id"] == self.LONG_FILE_ID + "1", "Car photo saved")
+        self._assert(data["vin_photo_file_id"] == self.LONG_FILE_ID + "vin", "VIN photo saved")
         self._assert(CarPhoto.objects.filter(car_id=data["id"]).count() == 3, "All car photos saved")
         return data
 

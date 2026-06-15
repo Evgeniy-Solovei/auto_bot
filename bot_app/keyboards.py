@@ -137,12 +137,7 @@ def car_actions_inline(car: dict, is_manager: bool = True) -> InlineKeyboardMark
 
 
 def expenses_inline(expenses: list[dict], is_manager: bool = False) -> InlineKeyboardMarkup | None:
-    if not is_manager:
-        return None
-    buttons = []
-    for expense in expenses[:10]:
-        buttons.append([InlineKeyboardButton(text=f"Удалить #{expense['id']}", callback_data=f"expense_delete_confirm:{expense['id']}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    return None
 
 
 def confirm_delete_expense_inline(expense_id: int) -> InlineKeyboardMarkup:

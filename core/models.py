@@ -72,6 +72,8 @@ class Car(models.Model):
     description = models.TextField("Комментарий", blank=True)
     car_photo_file_id = models.CharField("Telegram file_id фото авто", max_length=1024, blank=True)
     car_photo = models.ImageField("Фото авто", upload_to="cars/", blank=True)
+    vin_photo_file_id = models.CharField("Telegram file_id фото VIN", max_length=1024, blank=True)
+    vin_photo = models.ImageField("Фото VIN", upload_to="vin_photos/", blank=True)
     created_by = models.ForeignKey(
         TelegramUser,
         verbose_name="Добавил",

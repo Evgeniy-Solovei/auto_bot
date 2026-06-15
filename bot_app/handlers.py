@@ -276,8 +276,12 @@ async def cancel(message: Message, state: FSMContext) -> None:
 @router.message(F.text == HELP)
 async def help_message(message: Message) -> None:
     await message.answer(
-        "Быстрый расход: напишите сообщение в формате `капот 200`.\n"
-        "Расходы добавляются только к заказам со статусом В работе.",
+        "Быстрый расход: `капот 200`.\n"
+        "Несколько расходов: `крыло 450, бампер 800, фара 300`.\n"
+        "После этого выберите заказ, валюту и категорию один раз.\n"
+        "Расходы добавляются только к заказам в работе.\n"
+        "Фото можно прикреплять к авто, VIN, дефектовке и расходам.\n"
+        "Редактирование заказов и удаление расходов выполняет руководитель.",
         reply_markup=await _message_menu(message),
         parse_mode="Markdown",
     )
@@ -315,8 +319,30 @@ async def add_car_model(message: Message, state: FSMContext) -> None:
 @router.message(AddCarStates.vin_or_plate)
 async def add_car_vin_or_plate(message: Message, state: FSMContext) -> None:
     await state.update_data(vin_or_plate="" if message.text == SKIP else (message.text or "").strip())
+    await state.set_state(AddCarStates.vin_photo)
+    await message.answer("Отправьте фото VIN-кода, либо нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+
+
+@router.message(AddCarStates.vin_photo, F.photo | F.document)
+async def add_car_vin_photo(message: Message, state: FSMContext) -> None:
+    file_id = _telegram_image_file_id(message)
+    if not file_id:
+        await message.answer("Отправьте фото VIN-кода или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+        return
+    image_path = await _save_telegram_file_to_media(message, file_id, "vin_photos")
+    await state.update_data(vin_photo_file_id=file_id, vin_photo_path=image_path)
     await state.set_state(AddCarStates.description)
-    await message.answer("Введите краткое описание работ / повреждений, либо нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+    await message.answer("Фото VIN сохранено. Введите краткое описание работ / повреждений, либо нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+
+
+@router.message(AddCarStates.vin_photo)
+async def add_car_vin_photo_skip(message: Message, state: FSMContext) -> None:
+    if message.text == SKIP:
+        await state.update_data(vin_photo_file_id="", vin_photo_path="")
+        await state.set_state(AddCarStates.description)
+        await message.answer("Введите краткое описание работ / повреждений, либо нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
+        return
+    await message.answer("Отправьте фото VIN-кода или нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
 
 
 @router.message(AddCarStates.description)
@@ -780,7 +806,7 @@ async def totals(message: Message) -> None:
             total_text = _money(row.get("total_expenses") or 0)
             totals_all["BYN"] = totals_all.get("BYN", Decimal("0")) + Decimal(str(row.get("total_expenses") or 0))
         stage = row.get("repair_stage_display") or "-"
-        lines.append(f"#{row['car_id']} {row['title']} - {row['status_display']} - {stage} - {total_text}")
+        lines.append(f"#{row['car_id']} {_car_label(row)} - {row['status_display']} - {stage} - {total_text}")
     if totals_all and len(rows) > 1:
         lines.append("Всего: " + ", ".join(_money(amount, currency) for currency, amount in sorted(totals_all.items())))
     await message.answer("\n".join(lines), reply_markup=manager_menu())
