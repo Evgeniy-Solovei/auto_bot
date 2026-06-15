@@ -33,6 +33,7 @@ from bot_app.keyboards import (
     cancel_keyboard,
     car_actions_inline,
     cars_inline,
+    cars_page_inline,
     categories_inline,
     currency_inline,
     employee_menu,
@@ -433,11 +434,7 @@ async def list_cars(message: Message) -> None:
     await message.answer("Выберите статус заказов.", reply_markup=status_filter_inline("cars_status"))
 
 
-@router.callback_query(F.data.startswith("cars_status:"))
-async def list_cars_by_status(callback: CallbackQuery) -> None:
-    if not await _require_manager_callback(callback):
-        return
-    status_value = callback.data.split(":", 1)[1]
+async def _send_cars_page(callback: CallbackQuery, status_value: str, page: int = 0, edit: bool = False) -> None:
     status_filter = None if status_value == "all" else status_value
     try:
         cars = await api_client.list_cars(status=status_filter)
@@ -450,11 +447,48 @@ async def list_cars_by_status(callback: CallbackQuery) -> None:
         await callback.message.answer(f"{title}: список пуст.")
         await callback.answer()
         return
-    await callback.message.answer(title)
-    for car in cars[:30]:
-        await callback.message.answer(_car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
-    if len(cars) > 30:
-        await callback.message.answer(f"Показаны первые 30 из {len(cars)}.")
+    text = f"{title}: {len(cars)} шт. Выберите заказ."
+    reply_markup = cars_page_inline(cars, status_value=status_value, page=page)
+    if edit:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    else:
+        await callback.message.answer(text, reply_markup=reply_markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cars_status:"))
+async def list_cars_by_status(callback: CallbackQuery) -> None:
+    if not await _require_manager_callback(callback):
+        return
+    status_value = callback.data.split(":", 1)[1]
+    await _send_cars_page(callback, status_value=status_value, page=0)
+
+
+@router.callback_query(F.data.startswith("cars_page:"))
+async def list_cars_page(callback: CallbackQuery) -> None:
+    if not await _require_manager_callback(callback):
+        return
+    _, status_value, page = callback.data.split(":")
+    await _send_cars_page(callback, status_value=status_value, page=int(page), edit=True)
+
+
+@router.callback_query(F.data == "cars_page_noop")
+async def cars_page_noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("car_detail:"))
+async def car_detail(callback: CallbackQuery) -> None:
+    if not await _require_manager_callback(callback):
+        return
+    car_id = int(callback.data.split(":")[1])
+    try:
+        car = await api_client.get_car(car_id)
+    except httpx.HTTPError:
+        await callback.message.answer(GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    await callback.message.answer(_car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
     await callback.answer()
 
 

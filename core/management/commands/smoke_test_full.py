@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
-from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, manager_menu, employee_menu
+from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, cars_page_inline, manager_menu, employee_menu
 from bot_app.handlers import parse_car_title_brand_model, parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
@@ -49,6 +49,7 @@ class Command(BaseCommand):
 
     def _run(self):
         self._check_menus()
+        self._check_cars_page_keyboard()
         self._check_car_title_parser()
         self._seed_categories()
         manager = self._create_user(910000001, "manager", "Smoke Manager", TelegramUser.Role.MANAGER)
@@ -99,6 +100,18 @@ class Command(BaseCommand):
         self._assert(ADD_EXPENSE in manager_texts, "Manager menu has add expense")
         self._assert(ADD_CAR not in employee_texts, "Employee menu does not have add order")
         self._assert(ACTIVE_ORDERS in employee_texts, "Employee menu has active orders")
+
+    def _check_cars_page_keyboard(self):
+        cars = [
+            {"id": idx, "title": f"Заказ {idx}", "make_model": "Toyota Prius", "status_display": "В работе"}
+            for idx in range(1, 26)
+        ]
+        keyboard = cars_page_inline(cars, status_value="all", page=0)
+        rows = keyboard.inline_keyboard
+        car_buttons = [row[0] for row in rows[:-1]]
+        nav_buttons = rows[-1]
+        self._assert(len(car_buttons) == 10, "Cars page shows 10 order buttons")
+        self._assert(any(button.text == "Вперёд" for button in nav_buttons), "Cars page has next button")
 
     def _check_car_title_parser(self):
         comma = parse_car_title_brand_model("Вова, Toyota, Prius")

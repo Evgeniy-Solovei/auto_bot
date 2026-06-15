@@ -74,6 +74,28 @@ def cars_inline(cars: list[dict], prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def cars_page_inline(cars: list[dict], status_value: str, page: int = 0, page_size: int = 10) -> InlineKeyboardMarkup:
+    total_pages = max((len(cars) + page_size - 1) // page_size, 1)
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    buttons = []
+    for car in cars[start:start + page_size]:
+        label = f"#{car['id']} {car['title']}"
+        if car.get("make_model"):
+            label = f"{label} ({car['make_model']})"
+        if car.get("status_display"):
+            label = f"{label} - {car['status_display']}"
+        buttons.append([InlineKeyboardButton(text=label[:64], callback_data=f"car_detail:{car['id']}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"cars_page:{status_value}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="cars_page_noop"))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(text="Вперёд", callback_data=f"cars_page:{status_value}:{page + 1}"))
+    buttons.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def categories_inline(categories: list[dict], prefix: str = "category") -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text=category["name"], callback_data=f"{prefix}:{category['id']}")] for category in categories]
     if not any(category["name"].lower() == "прочее" for category in categories):
