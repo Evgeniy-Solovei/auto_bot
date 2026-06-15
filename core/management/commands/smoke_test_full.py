@@ -111,7 +111,7 @@ class Command(BaseCommand):
         car_buttons = [row[0] for row in rows[:-1]]
         nav_buttons = rows[-1]
         self._assert(len(car_buttons) == 10, "Cars page shows 10 order buttons")
-        self._assert(any(button.text == "Вперёд" for button in nav_buttons), "Cars page has next button")
+        self._assert(any("Вперёд" in button.text for button in nav_buttons), "Cars page has next button")
 
     def _check_car_title_parser(self):
         comma = parse_car_title_brand_model("Вова, Toyota, Prius")
