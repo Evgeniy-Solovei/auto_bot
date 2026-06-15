@@ -173,6 +173,13 @@ def _quick_items_total(items: list[dict[str, str]]) -> Decimal:
     return sum((Decimal(str(item["amount"])) for item in items), Decimal("0"))
 
 
+def parse_car_title_brand_model(text: str) -> tuple[str, str, str] | None:
+    parts = [part.strip() for part in re.split(r"[,.;]+", text.strip()) if part.strip()]
+    if len(parts) != 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
 def _is_manager_access(access: dict | None) -> bool:
     if not _access_control_enabled():
         return True
@@ -292,14 +299,19 @@ async def add_car_start(message: Message, state: FSMContext) -> None:
     if not await _require_manager(message):
         return
     await state.set_state(AddCarStates.title)
-    await message.answer("Введите название / условное описание заказа.", reply_markup=cancel_keyboard())
+    await message.answer("Введите название, марку и модель через запятую или точку.\nПример: Вова, Toyota, Prius", reply_markup=cancel_keyboard())
 
 
 @router.message(AddCarStates.title)
 async def add_car_title(message: Message, state: FSMContext) -> None:
-    await state.update_data(title=(message.text or "").strip())
-    await state.set_state(AddCarStates.brand)
-    await message.answer("Введите марку автомобиля.", reply_markup=cancel_keyboard())
+    parsed = parse_car_title_brand_model(message.text or "")
+    if not parsed:
+        await message.answer("Не удалось разобрать данные. Напишите в формате: Вова, Toyota, Prius", reply_markup=cancel_keyboard())
+        return
+    title, brand, model = parsed
+    await state.update_data(title=title, brand=brand, model=model)
+    await state.set_state(AddCarStates.vin_or_plate)
+    await message.answer("Введите VIN или госномер, либо нажмите Пропустить.", reply_markup=skip_cancel_keyboard())
 
 
 @router.message(AddCarStates.brand)

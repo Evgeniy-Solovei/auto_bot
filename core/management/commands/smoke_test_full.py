@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
 from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, manager_menu, employee_menu
-from bot_app.handlers import parse_expense_items
+from bot_app.handlers import parse_car_title_brand_model, parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 
@@ -49,6 +49,7 @@ class Command(BaseCommand):
 
     def _run(self):
         self._check_menus()
+        self._check_car_title_parser()
         self._seed_categories()
         manager = self._create_user(910000001, "manager", "Smoke Manager", TelegramUser.Role.MANAGER)
         employee = self._create_user(910000002, "employee", "Smoke Employee", TelegramUser.Role.EMPLOYEE)
@@ -98,6 +99,12 @@ class Command(BaseCommand):
         self._assert(ADD_EXPENSE in manager_texts, "Manager menu has add expense")
         self._assert(ADD_CAR not in employee_texts, "Employee menu does not have add order")
         self._assert(ACTIVE_ORDERS in employee_texts, "Employee menu has active orders")
+
+    def _check_car_title_parser(self):
+        comma = parse_car_title_brand_model("Вова, Toyota, Prius")
+        dot = parse_car_title_brand_model("Вова. Toyota. Prius")
+        self._assert(comma == ("Вова", "Toyota", "Prius"), "Car title comma parser works")
+        self._assert(dot == ("Вова", "Toyota", "Prius"), "Car title dot parser works")
 
     def _seed_categories(self):
         ExpenseCategory.objects.exclude(name__in=DEFAULT_CATEGORIES).update(is_active=False)
