@@ -25,13 +25,6 @@ REPAIR_STAGES = [
     ("done", "Завершен"),
 ]
 
-STATUS_ICONS = {
-    "in_work": "🟢",
-    "completed": "✅",
-    "archived": "🗄",
-}
-
-
 def _short_button_text(text: str, limit: int = 42) -> str:
     text = " ".join(str(text).split())
     if len(text) <= limit:
@@ -93,8 +86,7 @@ def cars_page_inline(cars: list[dict], status_value: str, page: int = 0, page_si
     start = page * page_size
     buttons = []
     for car in cars[start:start + page_size]:
-        icon = STATUS_ICONS.get(car.get("status"), "🚗")
-        label_parts = [f"{icon} #{car['id']}", car.get("title") or "Заказ"]
+        label_parts = [f"#{car['id']}", car.get("title") or "Заказ"]
         if car.get("make_model"):
             label_parts.append(f"· {car['make_model']}")
         label = _short_button_text(" ".join(label_parts), limit=46)
@@ -131,7 +123,7 @@ def status_filter_inline(prefix: str, include_all: bool = True) -> InlineKeyboar
         buttons.append([InlineKeyboardButton(text="📋 Все", callback_data=f"{prefix}:all")])
     buttons.extend(
         [
-            [InlineKeyboardButton(text="🟢 В работе", callback_data=f"{prefix}:in_work")],
+            [InlineKeyboardButton(text="В работе", callback_data=f"{prefix}:in_work")],
             [InlineKeyboardButton(text="✅ Завершенные", callback_data=f"{prefix}:completed")],
             [InlineKeyboardButton(text="🗄 Архив", callback_data=f"{prefix}:archived")],
         ]
@@ -164,10 +156,10 @@ def car_actions_inline(car: dict, is_manager: bool = True) -> InlineKeyboardMark
             buttons.append([InlineKeyboardButton(text="✅ Завершить", callback_data=f"car_status:{car_id}:completed")])
             buttons.append([InlineKeyboardButton(text="🗄 В архив", callback_data=f"car_status:{car_id}:archived")])
         elif car["status"] == "completed":
-            buttons.append([InlineKeyboardButton(text="🟢 В работу", callback_data=f"car_status:{car_id}:in_work")])
+            buttons.append([InlineKeyboardButton(text="В работу", callback_data=f"car_status:{car_id}:in_work")])
             buttons.append([InlineKeyboardButton(text="🗄 В архив", callback_data=f"car_status:{car_id}:archived")])
         else:
-            buttons.append([InlineKeyboardButton(text="🟢 В работу", callback_data=f"car_status:{car_id}:in_work")])
+            buttons.append([InlineKeyboardButton(text="В работу", callback_data=f"car_status:{car_id}:in_work")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

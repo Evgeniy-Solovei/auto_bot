@@ -112,6 +112,7 @@ class Command(BaseCommand):
         nav_buttons = rows[-1]
         self._assert(len(car_buttons) == 10, "Cars page shows 10 order buttons")
         self._assert(any("Вперёд" in button.text for button in nav_buttons), "Cars page has next button")
+        self._assert(not car_buttons[0].text.startswith("🟢"), "Cars page buttons have no green icon")
 
     def _check_car_title_parser(self):
         comma = parse_car_title_brand_model("Вова, Toyota, Prius")
@@ -262,6 +263,8 @@ class Command(BaseCommand):
         self._assert(len(single) == 1, "Single quick expense text is parsed")
         self._assert(single[0]["description"] == "замена колодок", "Quick expense description parsed")
         self._assert(single[0]["amount"] == "200", "Quick expense amount parsed")
+        reversed_single = parse_expense_items("70 яндекс")
+        self._assert(reversed_single == [{"description": "яндекс", "amount": "70"}], "Reverse quick expense text is parsed")
 
         batch = parse_expense_items("Покраска крыла 450, покраска бампера 800, покраска внутрянки 450")
         self._assert(len(batch) == 3, "Batch quick expense text is parsed")
