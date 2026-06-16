@@ -269,6 +269,14 @@ class Command(BaseCommand):
         batch = parse_expense_items("Покраска крыла 450, покраска бампера 800, покраска внутрянки 450")
         self._assert(len(batch) == 3, "Batch quick expense text is parsed")
         self._assert(sum(Decimal(item["amount"]) for item in batch) == Decimal("1700"), "Batch quick expense total parsed")
+        split_amount_batch = parse_expense_items("Покраска бампера переднего 750, 600\nпокраска заднего бампера")
+        self._assert(
+            split_amount_batch == [
+                {"description": "Покраска бампера переднего", "amount": "750"},
+                {"description": "покраска заднего бампера", "amount": "600"},
+            ],
+            "Batch quick expense parses comma amount before next description",
+        )
 
         bulk_data = self._api(
             "post",

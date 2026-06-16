@@ -58,6 +58,7 @@ SAVE_ERROR_TEXT = "Не получилось сохранить данные. П
 PHOTO_STATE_LOCKS: dict[str, asyncio.Lock] = {}
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
 QUICK_EXPENSE_REVERSE_RE = re.compile(r"^(?P<amount>\d+(?:[,.]\d{1,2})?)\s+(?P<description>.+?)$")
+QUICK_EXPENSE_AMOUNT_RE = re.compile(r"^\d+(?:[,.]\d{1,2})?$")
 QUICK_EXPENSE_TRIGGER_RE = re.compile(r"[\s\S]*\d+(?:[,.]\d{1,2})?|\d+(?:[,.]\d{1,2})?[\s\S]*")
 MENU_TEXTS = {
     ACTIVE_ORDERS,
@@ -154,20 +155,61 @@ def _totals_text(car: dict) -> str:
     return _money(car.get("total_expenses") or 0)
 
 
+def _quick_expense_item(description: str, amount_text: str) -> dict[str, str] | None:
+    description = description.strip(" -–—")
+    amount = Decimal(amount_text.replace(",", "."))
+    if not description or amount <= 0:
+        return None
+    return {"description": description, "amount": str(amount)}
+
+
 def parse_expense_items(text: str) -> list[dict[str, str]]:
-    parts = [part.strip() for part in re.split(r"[;\n]+|,\s+(?=\D)", text.strip()) if part.strip()]
+    parts = [part.strip() for part in re.split(r"[;\n]+|,\s+", text.strip()) if part.strip()]
     if not parts:
         return []
     items: list[dict[str, str]] = []
+    pending_amount = ""
+    pending_description = ""
     for part in parts:
         match = QUICK_EXPENSE_RE.match(part) or QUICK_EXPENSE_REVERSE_RE.match(part)
-        if not match:
+        if match:
+            if pending_amount or pending_description:
+                return []
+            item = _quick_expense_item(match.group("description"), match.group("amount"))
+            if not item:
+                return []
+            items.append(item)
+            continue
+
+        if QUICK_EXPENSE_AMOUNT_RE.match(part):
+            if pending_amount:
+                return []
+            if pending_description:
+                item = _quick_expense_item(pending_description, part)
+                if not item:
+                    return []
+                items.append(item)
+                pending_description = ""
+            else:
+                pending_amount = part
+            continue
+
+        description = part.strip(" -–—")
+        if not description:
             return []
-        description = match.group("description").strip(" -–—")
-        amount = Decimal(match.group("amount").replace(",", "."))
-        if not description or amount <= 0:
+        if pending_amount:
+            item = _quick_expense_item(description, pending_amount)
+            if not item:
+                return []
+            items.append(item)
+            pending_amount = ""
+        elif pending_description:
             return []
-        items.append({"description": description, "amount": str(amount)})
+        else:
+            pending_description = description
+
+    if pending_amount or pending_description:
+        return []
     return items
 
 
@@ -286,7 +328,7 @@ async def cancel(message: Message, state: FSMContext) -> None:
 async def help_message(message: Message) -> None:
     await message.answer(
         "Быстрый расход: `капот 200` или `200 капот`.\n"
-        "Несколько расходов: `крыло 450, бампер 800, фара 300`.\n"
+        "Несколько расходов: `крыло 450, бампер 800` или `крыло 450, 800 бампер`.\n"
         "После этого выберите заказ, валюту и категорию один раз.\n"
         "Расходы добавляются только к заказам в работе.\n"
         "Фото можно прикреплять к авто, VIN, дефектовке и расходам.\n"
@@ -1020,7 +1062,7 @@ async def quick_expense(message: Message, state: FSMContext) -> None:
     except (InvalidOperation, ValueError):
         items = []
     if not items:
-        await message.answer("Не удалось разобрать расходы. Формат: покраска крыла 450 или 450 покраска крыла")
+        await message.answer("Не удалось разобрать расходы. Формат: покраска крыла 450, 600 покраска бампера")
         return
     try:
         cars = await _active_cars()
@@ -1152,4 +1194,4 @@ async def _finish_quick_expense(
 async def unknown_text(message: Message) -> None:
     if not message.text or message.text in MENU_TEXTS or message.text.startswith("/"):
         return
-    await message.answer("Не удалось определить сумму.\nНапишите расход в формате: капот 200 или 200 капот", reply_markup=await _message_menu(message))
+    await message.answer("Не удалось определить сумму.\nФормат: капот 200 или 200 капот", reply_markup=await _message_menu(message))
