@@ -25,8 +25,10 @@ from core.serializers import (
     ExpensePatchSerializer,
     TelegramUserInputSerializer,
     serialize_car,
+    serialize_car_photo,
     serialize_defect_photo,
     serialize_expense,
+    serialize_expense_photo,
 )
 
 
@@ -291,6 +293,42 @@ class CarDetailView(InternalAPIView):
         async for row in Expense.objects.filter(car=car).values("currency").annotate(total=Sum("amount")):
             totals_by_currency[row["currency"] or "BYN"] = row["total"] or 0
         return Response(serialize_car(car, total=aggregate["total"] or 0, expenses_count=aggregate["count"] or 0, total_by_currency=totals_by_currency))
+
+
+class CarPhotoListView(InternalAPIView):
+    async def get(self, request):
+        car_id = request.query_params.get("car_id")
+        photos_qs = CarPhoto.objects.select_related("car", "created_by").all()
+        if car_id:
+            photos_qs = photos_qs.filter(car_id=car_id)
+        photos = [serialize_car_photo(photo) async for photo in photos_qs.order_by("created_at")]
+        return Response(photos)
+
+
+class ExpensePhotoListView(InternalAPIView):
+    async def get(self, request):
+        expense_id = request.query_params.get("expense_id")
+        photos_qs = ExpensePhoto.objects.select_related("expense", "expense__car").all()
+        if expense_id:
+            photos_qs = photos_qs.filter(expense_id=expense_id)
+        photos = [serialize_expense_photo(photo) async for photo in photos_qs.order_by("created_at")]
+        if expense_id and not photos:
+            try:
+                expense = await Expense.objects.aget(pk=expense_id)
+            except Expense.DoesNotExist:
+                return Response([])
+            if expense.receipt_photo_file_id or expense.receipt_photo:
+                photos.append(
+                    {
+                        "id": None,
+                        "expense_id": expense.id,
+                        "expense": str(expense),
+                        "photo_file_id": expense.receipt_photo_file_id,
+                        "image_url": expense.receipt_photo.url if expense.receipt_photo else "",
+                        "created_at": expense.created_at,
+                    }
+                )
+        return Response(photos)
 
 
 class DefectPhotoListCreateView(InternalAPIView):

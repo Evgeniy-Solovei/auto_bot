@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
-from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, cars_page_inline, manager_menu, employee_menu
+from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, car_actions_inline, cars_page_inline, manager_menu, employee_menu
 from bot_app.handlers import parse_car_title_brand_model, parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
@@ -100,6 +100,11 @@ class Command(BaseCommand):
         self._assert(ADD_EXPENSE in manager_texts, "Manager menu has add expense")
         self._assert(ADD_CAR not in employee_texts, "Employee menu does not have add order")
         self._assert(ACTIVE_ORDERS in employee_texts, "Employee menu has active orders")
+        car_buttons = [button.text for row in car_actions_inline({"id": 1, "status": "in_work"}).inline_keyboard for button in row]
+        self._assert(car_buttons.count("📸 Фото") == 1, "Car card has one photo button")
+        self._assert(car_buttons.count("➕ Фото дефектовки") == 1, "Car card has separate add defect photo button")
+        photo_menu_buttons = [button.text for row in __import__("bot_app.keyboards", fromlist=["car_photos_menu_inline"]).car_photos_menu_inline(1).inline_keyboard for button in row]
+        self._assert("➕ Добавить фото дефектовки" not in photo_menu_buttons, "Photo menu has no add defect button")
 
     def _check_cars_page_keyboard(self):
         cars = [
@@ -173,6 +178,8 @@ class Command(BaseCommand):
         self._assert(data["car_photo_file_id"] == self.LONG_FILE_ID + "1", "Car photo saved")
         self._assert(data["vin_photo_file_id"] == self.LONG_FILE_ID + "vin", "VIN photo saved")
         self._assert(CarPhoto.objects.filter(car_id=data["id"]).count() == 3, "All car photos saved")
+        car_photos = self._api("get", "/api/car-photos/", expected=200, query={"car_id": data["id"]})
+        self._assert(len(car_photos) == 3, "Car photos API returns all photos")
         return data
 
     def _patch_car(self, car_id):
@@ -223,6 +230,8 @@ class Command(BaseCommand):
         self.created_expense_ids.append(data["id"])
         self._assert(data["currency"] == currency, f"Expense currency {currency} saved")
         self._assert(ExpensePhoto.objects.filter(expense_id=data["id"]).count() == 3, "All expense photos saved")
+        expense_photos = self._api("get", "/api/expense-photos/", expected=200, query={"expense_id": data["id"]})
+        self._assert(len(expense_photos) == 3, "Expense photos API returns all photos")
         return data
 
     def _patch_expense(self, expense_id, manager_tg_id):

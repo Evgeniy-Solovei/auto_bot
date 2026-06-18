@@ -87,9 +87,17 @@ class ApiClient:
     async def update_car_stage(self, car_id: int, repair_stage: str) -> dict:
         return await self.update_car(car_id, {"repair_stage": repair_stage})
 
+    async def list_car_photos(self, car_id: int | None = None) -> list[dict]:
+        params = {"car_id": car_id} if car_id else None
+        return await self._request("GET", "/car-photos/", params=params)
+
     async def list_defect_photos(self, car_id: int | None = None) -> list[dict]:
         params = {"car_id": car_id} if car_id else None
         return await self._request("GET", "/defect-photos/", params=params)
+
+    async def list_expense_photos(self, expense_id: int | None = None) -> list[dict]:
+        params = {"expense_id": expense_id} if expense_id else None
+        return await self._request("GET", "/expense-photos/", params=params)
 
     async def create_defect_photo(
         self,

@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from core.models import Car, DefectPhoto, Expense
+from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpensePhoto
 
 
 class TelegramUserInputSerializer(serializers.Serializer):
@@ -134,6 +134,29 @@ def serialize_expense(expense: Expense) -> dict:
         "created_at": expense.created_at,
         "updated_at": expense.updated_at,
         "updated_by": str(expense.updated_by) if expense.updated_by_id else None,
+    }
+
+
+def serialize_car_photo(photo: CarPhoto) -> dict:
+    return {
+        "id": photo.id,
+        "car_id": photo.car_id,
+        "car": str(photo.car),
+        "photo_file_id": photo.photo_file_id,
+        "image_url": photo.image.url if photo.image else "",
+        "created_by": str(photo.created_by) if photo.created_by_id else None,
+        "created_at": photo.created_at,
+    }
+
+
+def serialize_expense_photo(photo: ExpensePhoto) -> dict:
+    return {
+        "id": photo.id,
+        "expense_id": photo.expense_id,
+        "expense": str(photo.expense),
+        "photo_file_id": photo.photo_file_id,
+        "image_url": photo.image.url if photo.image else "",
+        "created_at": photo.created_at,
     }
 
 

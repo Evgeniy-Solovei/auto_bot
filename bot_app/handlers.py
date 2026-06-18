@@ -32,6 +32,7 @@ from bot_app.keyboards import (
     TOTALS,
     cancel_keyboard,
     car_actions_inline,
+    car_photos_menu_inline,
     cars_inline,
     cars_page_inline,
     categories_inline,
@@ -56,6 +57,7 @@ MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "media"))
 GENERIC_ERROR_TEXT = "Не получилось выполнить действие. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 SAVE_ERROR_TEXT = "Не получилось сохранить данные. Попробуйте ещё раз. Если ошибка повторится, сообщите администратору."
 PHOTO_STATE_LOCKS: dict[str, asyncio.Lock] = {}
+LAST_BOT_MESSAGE_IDS: dict[int, list[int]] = {}
 QUICK_EXPENSE_RE = re.compile(r"^(?P<description>.+?)\s+(?P<amount>\d+(?:[,.]\d{1,2})?)$")
 QUICK_EXPENSE_REVERSE_RE = re.compile(r"^(?P<amount>\d+(?:[,.]\d{1,2})?)\s+(?P<description>.+?)$")
 QUICK_EXPENSE_AMOUNT_RE = re.compile(r"^\d+(?:[,.]\d{1,2})?$")
@@ -90,6 +92,55 @@ def _telegram_image_file_id(message: Message) -> str:
         return message.document.file_id
     return ""
 
+
+def _remember_bot_message(chat_id: int, sent: Message | None) -> None:
+    if sent:
+        LAST_BOT_MESSAGE_IDS.setdefault(chat_id, []).append(sent.message_id)
+
+
+async def _delete_previous_bot_messages(bot, chat_id: int) -> None:
+    message_ids = LAST_BOT_MESSAGE_IDS.pop(chat_id, [])
+    for message_id in message_ids[-20:]:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            logger.debug("Could not delete bot message: chat_id=%s message_id=%s", chat_id, message_id, exc_info=True)
+
+
+async def _answer_clean(message: Message, text: str, **kwargs) -> Message:
+    await _delete_previous_bot_messages(message.bot, message.chat.id)
+    sent = await message.answer(text, **kwargs)
+    _remember_bot_message(message.chat.id, sent)
+    return sent
+
+
+async def _callback_answer_clean(callback: CallbackQuery, text: str, **kwargs) -> Message:
+    await _delete_previous_bot_messages(callback.bot, callback.message.chat.id)
+    sent = await callback.message.answer(text, **kwargs)
+    _remember_bot_message(callback.message.chat.id, sent)
+    return sent
+
+
+async def _send_photo_messages(callback: CallbackQuery, title: str, photos: list[dict], empty_text: str) -> None:
+    chat_id = callback.message.chat.id
+    await _delete_previous_bot_messages(callback.bot, chat_id)
+    sent = await callback.message.answer(title if photos else empty_text)
+    _remember_bot_message(chat_id, sent)
+    for photo in photos[:10]:
+        file_id = photo.get("photo_file_id") or photo.get("file_id") or ""
+        caption = (photo.get("comment") or title)[:1024]
+        try:
+            if file_id:
+                sent = await callback.message.answer_photo(file_id, caption=caption)
+            else:
+                sent = await callback.message.answer(photo.get("image_url") or "Фото сохранено без Telegram file_id")
+            _remember_bot_message(chat_id, sent)
+        except Exception:
+            sent = await callback.message.answer(f"Фото file_id: {file_id}" if file_id else "Не удалось открыть фото.")
+            _remember_bot_message(chat_id, sent)
+    if len(photos) > 10:
+        sent = await callback.message.answer(f"Показаны первые 10 из {len(photos)}.")
+        _remember_bot_message(chat_id, sent)
 
 
 def _photo_lock(message: Message, scope: str) -> asyncio.Lock:
@@ -474,7 +525,7 @@ async def active_orders(message: Message) -> None:
 async def list_cars(message: Message) -> None:
     if not await _require_manager(message):
         return
-    await message.answer("Выберите статус заказов.", reply_markup=status_filter_inline("cars_status"))
+    await _answer_clean(message, "Выберите статус заказов.", reply_markup=status_filter_inline("cars_status"))
 
 
 async def _send_cars_page(callback: CallbackQuery, status_value: str, page: int = 0, edit: bool = False) -> None:
@@ -482,12 +533,12 @@ async def _send_cars_page(callback: CallbackQuery, status_value: str, page: int 
     try:
         cars = await api_client.list_cars(status=status_filter)
     except httpx.HTTPError:
-        await callback.message.answer(GENERIC_ERROR_TEXT)
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
         await callback.answer()
         return
     title = STATUS_TITLES.get(status_value, "Заказы")
     if not cars:
-        await callback.message.answer(f"{title}: список пуст.")
+        await _callback_answer_clean(callback, f"{title}: список пуст.")
         await callback.answer()
         return
     text = f"{title}: {len(cars)} шт. Выберите заказ."
@@ -495,7 +546,7 @@ async def _send_cars_page(callback: CallbackQuery, status_value: str, page: int 
     if edit:
         await callback.message.edit_text(text, reply_markup=reply_markup)
     else:
-        await callback.message.answer(text, reply_markup=reply_markup)
+        await _callback_answer_clean(callback, text, reply_markup=reply_markup)
     await callback.answer()
 
 
@@ -531,7 +582,7 @@ async def car_detail(callback: CallbackQuery) -> None:
         await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    await callback.message.answer(_car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
+    await _callback_answer_clean(callback, _car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
     await callback.answer()
 
 
@@ -844,12 +895,18 @@ async def show_expenses_for_car(callback: CallbackQuery) -> None:
         "Расходы:",
     ]
     if expenses:
-        lines.extend(_expense_line(expense) for expense in expenses[:20])
+        for expense in expenses[:20]:
+            lines.append(_expense_line(expense))
+            lines.append("")
+        if lines[-1] == "":
+            lines.pop()
         if len(expenses) > 20:
+            lines.append("")
             lines.append(f"Показаны первые 20 из {len(expenses)}.")
     else:
         lines.append("Расходов пока нет.")
-    await callback.message.answer(
+    await _callback_answer_clean(
+        callback,
         "\n".join(lines),
         reply_markup=expenses_inline(expenses, is_manager=is_manager) or car_actions_inline(car, is_manager=is_manager),
     )
@@ -950,6 +1007,70 @@ async def expense_delete_cancel(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("photos_menu:"))
+async def photos_menu(callback: CallbackQuery) -> None:
+    access = await _get_access(callback.from_user.id if callback.from_user else None)
+    is_manager = _is_manager_access(access)
+    car_id = int(callback.data.split(":")[1])
+    try:
+        car = await api_client.get_car(car_id)
+        if not is_manager and car.get("status") != "in_work":
+            await _callback_answer_clean(callback, "Сотрудник может смотреть фото только активного заказа.")
+            await callback.answer()
+            return
+    except httpx.HTTPError:
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    await _callback_answer_clean(callback, f"Фото: {_car_label(car)}", reply_markup=car_photos_menu_inline(car_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("car_photos:"))
+async def car_photos(callback: CallbackQuery) -> None:
+    car_id = int(callback.data.split(":")[1])
+    try:
+        car = await api_client.get_car(car_id)
+        photos = await api_client.list_car_photos(car_id=car_id)
+    except httpx.HTTPError:
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    if not photos and car.get("car_photo_file_id"):
+        photos = [{"photo_file_id": car["car_photo_file_id"], "comment": "Фото авто"}]
+    await _send_photo_messages(callback, f"Фото авто: {_car_label(car)}", photos, "Фото авто пока нет.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("vin_photo:"))
+async def vin_photo(callback: CallbackQuery) -> None:
+    car_id = int(callback.data.split(":")[1])
+    try:
+        car = await api_client.get_car(car_id)
+    except httpx.HTTPError:
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    photos = []
+    if car.get("vin_photo_file_id"):
+        photos.append({"photo_file_id": car["vin_photo_file_id"], "comment": "Фото VIN"})
+    await _send_photo_messages(callback, f"Фото VIN: {_car_label(car)}", photos, "Фото VIN пока нет.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("expense_photos:"))
+async def expense_photos(callback: CallbackQuery) -> None:
+    expense_id = int(callback.data.split(":")[1])
+    try:
+        photos = await api_client.list_expense_photos(expense_id=expense_id)
+    except httpx.HTTPError:
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    await _send_photo_messages(callback, f"Фото расхода #{expense_id}", photos, "Фото по этому расходу пока нет.")
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("defect_photos:"))
 async def defect_photos(callback: CallbackQuery) -> None:
     access = await _get_access(callback.from_user.id if callback.from_user else None)
@@ -958,27 +1079,15 @@ async def defect_photos(callback: CallbackQuery) -> None:
     try:
         car = await api_client.get_car(car_id)
         if not is_manager and car.get("status") != "in_work":
-            await callback.message.answer("Сотрудник может смотреть фото дефектовки только активного заказа.")
+            await _callback_answer_clean(callback, "Сотрудник может смотреть фото дефектовки только активного заказа.")
             await callback.answer()
             return
         photos = await api_client.list_defect_photos(car_id=car_id)
     except httpx.HTTPError:
-        await callback.message.answer(GENERIC_ERROR_TEXT)
+        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    if not photos:
-        await callback.message.answer("Фото дефектовки пока нет.", reply_markup=car_actions_inline(car, is_manager=is_manager))
-        await callback.answer()
-        return
-    await callback.message.answer(f"Фото дефектовки: {_car_label(car)}")
-    for photo in photos[:10]:
-        caption = photo.get("comment") or "Фото дефектовки"
-        try:
-            await callback.message.answer_photo(photo["photo_file_id"], caption=caption[:1024])
-        except Exception:
-            await callback.message.answer(f"Фото file_id: {photo['photo_file_id']}" + (f"\n{caption}" if caption else ""))
-    if len(photos) > 10:
-        await callback.message.answer(f"Показаны первые 10 из {len(photos)}.")
+    await _send_photo_messages(callback, f"Фото дефектовки: {_car_label(car)}", photos, "Фото дефектовки пока нет.")
     await callback.answer()
 
 
