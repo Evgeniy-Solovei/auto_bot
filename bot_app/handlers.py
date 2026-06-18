@@ -953,7 +953,7 @@ async def copy_expenses_for_customer(callback: CallbackQuery) -> None:
         await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    await callback.message.answer(_expenses_customer_text(expenses))
+    await _callback_answer_clean(callback, _expenses_customer_text(expenses))
     await callback.answer("Текст для копирования отправлен отдельным сообщением.")
 
 
