@@ -131,10 +131,28 @@ def status_filter_inline(prefix: str, include_all: bool = True) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def repair_stages_inline(car_id: int) -> InlineKeyboardMarkup:
+def back_to_photos_inline(car_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=label, callback_data=f"car_stage:{car_id}:{value}")] for value, label in REPAIR_STAGES]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад к фото", callback_data=f"photos_menu:{car_id}")],
+            [InlineKeyboardButton(text="⬅️ К заказу", callback_data=f"car_detail:{car_id}")],
+        ]
     )
+
+
+def back_to_expenses_inline(car_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Назад к расходам", callback_data=f"report_car:{car_id}")],
+            [InlineKeyboardButton(text="⬅️ К заказу", callback_data=f"car_detail:{car_id}")],
+        ]
+    )
+
+
+def repair_stages_inline(car_id: int) -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(text=label, callback_data=f"car_stage:{car_id}:{value}")] for value, label in REPAIR_STAGES]
+    buttons.append([InlineKeyboardButton(text="↩️ Назад к заказу", callback_data=f"car_detail:{car_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def car_actions_inline(car: dict, is_manager: bool = True) -> InlineKeyboardMarkup:
@@ -169,6 +187,7 @@ def car_photos_menu_inline(car_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🚗 Фото авто", callback_data=f"car_photos:{car_id}")],
             [InlineKeyboardButton(text="🔎 Фото VIN", callback_data=f"vin_photo:{car_id}")],
             [InlineKeyboardButton(text="📸 Фото дефектовки", callback_data=f"defect_photos:{car_id}")],
+            [InlineKeyboardButton(text="↩️ Назад к заказу", callback_data=f"car_detail:{car_id}")],
         ]
     )
 
@@ -176,7 +195,9 @@ def car_photos_menu_inline(car_id: int) -> InlineKeyboardMarkup:
 def expenses_inline(expenses: list[dict], is_manager: bool = False) -> InlineKeyboardMarkup | None:
     buttons = []
     for expense in expenses[:10]:
-        buttons.append([InlineKeyboardButton(text=f"📸 Фото расхода #{expense['id']}", callback_data=f"expense_photos:{expense['id']}")])
+        buttons.append([InlineKeyboardButton(text=f"📸 Фото расхода #{expense['id']}", callback_data=f"expense_photos:{expense['id']}:{expense['car_id']}")])
+    if expenses:
+        buttons.append([InlineKeyboardButton(text="↩️ Назад к заказу", callback_data=f"car_detail:{expenses[0]['car_id']}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
 

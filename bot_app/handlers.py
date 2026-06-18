@@ -31,6 +31,8 @@ from bot_app.keyboards import (
     SKIP,
     TOTALS,
     cancel_keyboard,
+    back_to_expenses_inline,
+    back_to_photos_inline,
     car_actions_inline,
     car_photos_menu_inline,
     cars_inline,
@@ -121,7 +123,7 @@ async def _callback_answer_clean(callback: CallbackQuery, text: str, **kwargs) -
     return sent
 
 
-async def _send_photo_messages(callback: CallbackQuery, title: str, photos: list[dict], empty_text: str) -> None:
+async def _send_photo_messages(callback: CallbackQuery, title: str, photos: list[dict], empty_text: str, reply_markup=None) -> None:
     chat_id = callback.message.chat.id
     await _delete_previous_bot_messages(callback.bot, chat_id)
     sent = await callback.message.answer(title if photos else empty_text)
@@ -140,6 +142,9 @@ async def _send_photo_messages(callback: CallbackQuery, title: str, photos: list
             _remember_bot_message(chat_id, sent)
     if len(photos) > 10:
         sent = await callback.message.answer(f"Показаны первые 10 из {len(photos)}.")
+        _remember_bot_message(chat_id, sent)
+    if reply_markup:
+        sent = await callback.message.answer("Что дальше?", reply_markup=reply_markup)
         _remember_bot_message(chat_id, sent)
 
 
@@ -573,8 +578,12 @@ async def cars_page_noop(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("car_detail:"))
 async def car_detail(callback: CallbackQuery) -> None:
-    if not await _require_manager_callback(callback):
+    access = await _get_access(callback.from_user.id if callback.from_user else None)
+    if access and access.get("allowed") is False:
+        await _callback_answer_clean(callback, "У вас нет доступа к системе. Обратитесь к администратору.")
+        await callback.answer()
         return
+    is_manager = _is_manager_access(access)
     car_id = int(callback.data.split(":")[1])
     try:
         car = await api_client.get_car(car_id)
@@ -582,7 +591,11 @@ async def car_detail(callback: CallbackQuery) -> None:
         await callback.message.answer(GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    await _callback_answer_clean(callback, _car_line(car), reply_markup=car_actions_inline(car, is_manager=True))
+    if not is_manager and car.get("status") != "in_work":
+        await _callback_answer_clean(callback, "Сотрудник может смотреть только активные заказы в работе.")
+        await callback.answer()
+        return
+    await _callback_answer_clean(callback, _car_line(car), reply_markup=car_actions_inline(car, is_manager=is_manager))
     await callback.answer()
 
 
@@ -1038,7 +1051,7 @@ async def car_photos(callback: CallbackQuery) -> None:
         return
     if not photos and car.get("car_photo_file_id"):
         photos = [{"photo_file_id": car["car_photo_file_id"], "comment": "Фото авто"}]
-    await _send_photo_messages(callback, f"Фото авто: {_car_label(car)}", photos, "Фото авто пока нет.")
+    await _send_photo_messages(callback, f"Фото авто: {_car_label(car)}", photos, "Фото авто пока нет.", reply_markup=back_to_photos_inline(car_id))
     await callback.answer()
 
 
@@ -1054,20 +1067,23 @@ async def vin_photo(callback: CallbackQuery) -> None:
     photos = []
     if car.get("vin_photo_file_id"):
         photos.append({"photo_file_id": car["vin_photo_file_id"], "comment": "Фото VIN"})
-    await _send_photo_messages(callback, f"Фото VIN: {_car_label(car)}", photos, "Фото VIN пока нет.")
+    await _send_photo_messages(callback, f"Фото VIN: {_car_label(car)}", photos, "Фото VIN пока нет.", reply_markup=back_to_photos_inline(car_id))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("expense_photos:"))
 async def expense_photos(callback: CallbackQuery) -> None:
-    expense_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    expense_id = int(parts[1])
+    car_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
     try:
         photos = await api_client.list_expense_photos(expense_id=expense_id)
     except httpx.HTTPError:
         await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    await _send_photo_messages(callback, f"Фото расхода #{expense_id}", photos, "Фото по этому расходу пока нет.")
+    reply_markup = back_to_expenses_inline(car_id) if car_id else None
+    await _send_photo_messages(callback, f"Фото расхода #{expense_id}", photos, "Фото по этому расходу пока нет.", reply_markup=reply_markup)
     await callback.answer()
 
 
@@ -1087,7 +1103,7 @@ async def defect_photos(callback: CallbackQuery) -> None:
         await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
         await callback.answer()
         return
-    await _send_photo_messages(callback, f"Фото дефектовки: {_car_label(car)}", photos, "Фото дефектовки пока нет.")
+    await _send_photo_messages(callback, f"Фото дефектовки: {_car_label(car)}", photos, "Фото дефектовки пока нет.", reply_markup=back_to_photos_inline(car_id))
     await callback.answer()
 
 

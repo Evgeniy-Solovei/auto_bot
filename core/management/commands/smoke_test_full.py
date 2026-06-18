@@ -5,7 +5,20 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.test import Client
 
-from bot_app.keyboards import ADD_CAR, ADD_EXPENSE, ACTIVE_ORDERS, LIST_CARS, car_actions_inline, cars_page_inline, manager_menu, employee_menu
+from bot_app.keyboards import (
+    ADD_CAR,
+    ADD_EXPENSE,
+    ACTIVE_ORDERS,
+    LIST_CARS,
+    back_to_photos_inline,
+    car_actions_inline,
+    car_photos_menu_inline,
+    cars_page_inline,
+    employee_menu,
+    expenses_inline,
+    manager_menu,
+    repair_stages_inline,
+)
 from bot_app.handlers import parse_car_title_brand_model, parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
@@ -103,8 +116,15 @@ class Command(BaseCommand):
         car_buttons = [button.text for row in car_actions_inline({"id": 1, "status": "in_work"}).inline_keyboard for button in row]
         self._assert(car_buttons.count("📸 Фото") == 1, "Car card has one photo button")
         self._assert(car_buttons.count("➕ Фото дефектовки") == 1, "Car card has separate add defect photo button")
-        photo_menu_buttons = [button.text for row in __import__("bot_app.keyboards", fromlist=["car_photos_menu_inline"]).car_photos_menu_inline(1).inline_keyboard for button in row]
+        photo_menu_buttons = [button.text for row in car_photos_menu_inline(1).inline_keyboard for button in row]
         self._assert("➕ Добавить фото дефектовки" not in photo_menu_buttons, "Photo menu has no add defect button")
+        self._assert("↩️ Назад к заказу" in photo_menu_buttons, "Photo menu has back to car button")
+        photo_back_buttons = [button.text for row in back_to_photos_inline(1).inline_keyboard for button in row]
+        self._assert("↩️ Назад к фото" in photo_back_buttons, "Photo view has back to photos button")
+        stage_buttons = [button.text for row in repair_stages_inline(1).inline_keyboard for button in row]
+        self._assert("↩️ Назад к заказу" in stage_buttons, "Stage menu has back to car button")
+        expense_buttons = [button.text for row in expenses_inline([{"id": 10, "car_id": 1}]).inline_keyboard for button in row]
+        self._assert("↩️ Назад к заказу" in expense_buttons, "Expenses buttons have back to car button")
 
     def _check_cars_page_keyboard(self):
         cars = [
