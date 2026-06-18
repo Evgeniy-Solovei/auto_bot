@@ -188,7 +188,10 @@ def expenses_inline(expenses: list[dict], is_manager: bool = False) -> InlineKey
         return None
     car_id = expenses[0]["car_id"]
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="↩️ Назад к заказу", callback_data=f"car_detail:{car_id}")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Скопировать расходы", callback_data=f"expenses_copy:{car_id}")],
+            [InlineKeyboardButton(text="↩️ Назад к заказу", callback_data=f"car_detail:{car_id}")],
+        ]
     )
 
 

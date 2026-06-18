@@ -19,7 +19,7 @@ from bot_app.keyboards import (
     manager_menu,
     repair_stages_inline,
 )
-from bot_app.handlers import parse_car_title_brand_model, parse_expense_items
+from bot_app.handlers import _expenses_customer_text, parse_car_title_brand_model, parse_expense_items
 from core.management.commands.seed_categories import DEFAULT_CATEGORIES
 from core.models import Car, CarPhoto, DefectPhoto, Expense, ExpenseCategory, ExpensePhoto, TelegramUser
 
@@ -124,8 +124,14 @@ class Command(BaseCommand):
         stage_buttons = [button.text for row in repair_stages_inline(1).inline_keyboard for button in row]
         self._assert("↩️ Назад к заказу" in stage_buttons, "Stage menu has back to car button")
         expense_buttons = [button.text for row in expenses_inline([{"id": 10, "car_id": 1}]).inline_keyboard for button in row]
+        self._assert("📋 Скопировать расходы" in expense_buttons, "Expenses buttons have copy button")
         self._assert("↩️ Назад к заказу" in expense_buttons, "Expenses buttons have back to car button")
         self._assert(not any("Фото расхода" in button for button in expense_buttons), "Expenses list has no expense photo buttons")
+        customer_text = _expenses_customer_text([
+            {"amount": "650.00", "currency": "BYN", "description": "дверь передняя левая", "category": "Работа", "employee": "fast_wheels", "created_at": "2026-06-15"},
+            {"amount": "650.00", "currency": "BYN", "description": "дверь задняя левая", "category": "Работа", "employee": "fast_wheels", "created_at": "2026-06-15"},
+        ])
+        self._assert(customer_text == "Расходы:\n650.00 BYN - дверь передняя левая\n650.00 BYN - дверь задняя левая", "Customer expenses copy text is clean")
 
     def _check_cars_page_keyboard(self):
         cars = [

@@ -343,6 +343,18 @@ def _expense_line(expense: dict) -> str:
     return f"{_money(expense['amount'], expense.get('currency') or 'BYN')} - {expense['description']} - {category} - {employee} - {created}"
 
 
+def _expense_customer_line(expense: dict) -> str:
+    return f"{_money(expense['amount'], expense.get('currency') or 'BYN')} - {expense['description']}"
+
+
+def _expenses_customer_text(expenses: list[dict]) -> str:
+    if not expenses:
+        return "Расходов пока нет."
+    lines = ["Расходы:"]
+    lines.extend(_expense_customer_line(expense) for expense in expenses)
+    return "\n".join(lines)
+
+
 async def _safe_register(message: Message) -> None:
     if not message.from_user or _access_control_enabled():
         return
@@ -923,6 +935,26 @@ async def show_expenses_for_car(callback: CallbackQuery) -> None:
         reply_markup=expenses_inline(expenses, is_manager=is_manager) or car_actions_inline(car, is_manager=is_manager),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("expenses_copy:"))
+async def copy_expenses_for_customer(callback: CallbackQuery) -> None:
+    access = await _get_access(callback.from_user.id if callback.from_user else None)
+    is_manager = _is_manager_access(access)
+    car_id = int(callback.data.split(":")[1])
+    try:
+        car = await api_client.get_car(car_id)
+        if not is_manager and car.get("status") != "in_work":
+            await callback.message.answer("Сотрудник может смотреть только активные заказы в работе.")
+            await callback.answer()
+            return
+        expenses = await api_client.list_expenses(car_id=car_id)
+    except httpx.HTTPError:
+        await callback.message.answer(GENERIC_ERROR_TEXT)
+        await callback.answer()
+        return
+    await callback.message.answer(_expenses_customer_text(expenses))
+    await callback.answer("Текст для копирования отправлен отдельным сообщением.")
 
 
 @router.message(F.text == MY_EXPENSES)
