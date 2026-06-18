@@ -31,7 +31,6 @@ from bot_app.keyboards import (
     SKIP,
     TOTALS,
     cancel_keyboard,
-    back_to_expenses_inline,
     back_to_photos_inline,
     car_actions_inline,
     car_photos_menu_inline,
@@ -1068,22 +1067,6 @@ async def vin_photo(callback: CallbackQuery) -> None:
     if car.get("vin_photo_file_id"):
         photos.append({"photo_file_id": car["vin_photo_file_id"], "comment": "Фото VIN"})
     await _send_photo_messages(callback, f"Фото VIN: {_car_label(car)}", photos, "Фото VIN пока нет.", reply_markup=back_to_photos_inline(car_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("expense_photos:"))
-async def expense_photos(callback: CallbackQuery) -> None:
-    parts = callback.data.split(":")
-    expense_id = int(parts[1])
-    car_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-    try:
-        photos = await api_client.list_expense_photos(expense_id=expense_id)
-    except httpx.HTTPError:
-        await _callback_answer_clean(callback, GENERIC_ERROR_TEXT)
-        await callback.answer()
-        return
-    reply_markup = back_to_expenses_inline(car_id) if car_id else None
-    await _send_photo_messages(callback, f"Фото расхода #{expense_id}", photos, "Фото по этому расходу пока нет.", reply_markup=reply_markup)
     await callback.answer()
 
 

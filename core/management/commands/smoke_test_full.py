@@ -125,6 +125,7 @@ class Command(BaseCommand):
         self._assert("↩️ Назад к заказу" in stage_buttons, "Stage menu has back to car button")
         expense_buttons = [button.text for row in expenses_inline([{"id": 10, "car_id": 1}]).inline_keyboard for button in row]
         self._assert("↩️ Назад к заказу" in expense_buttons, "Expenses buttons have back to car button")
+        self._assert(not any("Фото расхода" in button for button in expense_buttons), "Expenses list has no expense photo buttons")
 
     def _check_cars_page_keyboard(self):
         cars = [
@@ -249,9 +250,9 @@ class Command(BaseCommand):
         )
         self.created_expense_ids.append(data["id"])
         self._assert(data["currency"] == currency, f"Expense currency {currency} saved")
-        self._assert(ExpensePhoto.objects.filter(expense_id=data["id"]).count() == 3, "All expense photos saved")
+        self._assert(ExpensePhoto.objects.filter(expense_id=data["id"]).count() == 3, "All expense attachments saved")
         expense_photos = self._api("get", "/api/expense-photos/", expected=200, query={"expense_id": data["id"]})
-        self._assert(len(expense_photos) == 3, "Expense photos API returns all photos")
+        self._assert(len(expense_photos) == 3, "Expense attachments API returns all files")
         return data
 
     def _patch_expense(self, expense_id, manager_tg_id):
